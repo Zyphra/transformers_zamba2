@@ -4,6 +4,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+src/transformers/models/zamba2/csrc/
 
 # C extensions
 *.so
