@@ -38,7 +38,6 @@ class MLP(nn.Module):
                 return self.config.activation_func(x[0]) * x[1]
             self.activation_func = glu
         else:
-            print('going here instead')
             self.activation_func = self.config.activation_func
 
 
@@ -77,8 +76,6 @@ class MLP(nn.Module):
             assert self.activation_func == F.gelu
             intermediate_parallel = bias_gelu_impl(intermediate_parallel)
         else:
-            print(self.activation_func)
-            print(intermediate_parallel)
             intermediate_parallel = self.activation_func(intermediate_parallel)
         # [s, b, h]
         #print("intermediate parallel prior fc2: ", intermediate_parallel.shape)

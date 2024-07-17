@@ -11,15 +11,15 @@ class CausalSelfAttention(nn.Module):
 
     def __init__(self, config, layer_number, attn_mask_type=AttnMaskType.padding, **kwargs):
         super().__init__()
-        assert config.hidden_size % config.num_mem_heads == 0
+        assert config.hidden_size % config.num_attention_heads == 0
         self.config = config
         self.linear_qkv = nn.Linear(2 * config.hidden_size, 6 * config.hidden_size, bias=config.add_bias_linear)
         self.linear_proj = nn.Linear(2 * config.hidden_size, config.hidden_size, bias=config.add_bias_linear)
-        self.n_head = config.num_mem_heads
+        self.n_head = config.num_attention_heads
         self.n_embd = config.hidden_size * 2
         # For normal attention without groups, num_query_groups == num_attention_heads,
         # so these two will be the same
-        self.query_projection_size = self.config.kv_channels * self.config.num_mem_heads
+        self.query_projection_size = self.config.kv_channels * self.config.num_attention_heads
         self.kv_projection_size = self.config.kv_channels * self.config.num_query_groups
         world_size = 1
         self.world_size = world_size

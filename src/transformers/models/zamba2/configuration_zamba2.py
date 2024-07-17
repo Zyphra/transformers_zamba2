@@ -132,8 +132,8 @@ class Zamba2Config(PretrainedConfig):
         bias_gelu_fusion=False,
         lora_rank=128,
         num_hidden_layers=54,
-        # num_attention_heads=32,
-        # num_key_value_heads=None,
+        num_attention_heads=32,
+        num_key_value_heads=None,
         activation_func=F.gelu,
         initializer_range=0.02,
         rms_norm_eps=1e-5,
@@ -143,30 +143,19 @@ class Zamba2Config(PretrainedConfig):
         bos_token_id=1,
         eos_token_id=2,
         sliding_window=None,
-        # max_position_embeddings=4096,
         attention_dropout=0.0,
-        attn_layer_period=6,
-        attn_layer_offset=4,
-        num_mem_heads=32,
         use_shared_block_lora=True,
         use_mamba_kernels=True,
         **kwargs,
     ):
-        # mamba_d_state=16,
-        # mamba_d_conv=4,
-        # mamba_expand=2,
-        # mamba_dt_rank="auto",
-        # mamba_conv_bias=True,
-        # mamba_proj_bias=False,
-        # rope_theta=10000,
+
         self.vocab_size = vocab_size
         self.tie_word_embeddings = tie_word_embeddings
         self.hidden_size = hidden_size
         self.ffn_hidden_size = ffn_hidden_size
         self.num_hidden_layers = num_hidden_layers
-        # self.num_attention_heads = num_attention_heads
+        self.num_attention_heads = num_attention_heads
         self.sliding_window = sliding_window
-        # self.max_position_embeddings = max_position_embeddings
         self.attention_dropout = attention_dropout
         self.state_size = state_size
         self.conv_dimension = conv_dimension
@@ -179,17 +168,15 @@ class Zamba2Config(PretrainedConfig):
         self.lora_rank = lora_rank
         
         # for backward compatibility
-        # if num_key_value_heads is None:
-        #     num_key_value_heads = num_attention_heads
-        # self.num_key_value_heads = num_key_value_heads
+        if num_key_value_heads is None:
+            num_key_value_heads = num_attention_heads
+        self.num_key_value_heads = num_key_value_heads
 
-        self.num_mem_heads = num_mem_heads
-        self.kv_channels = 2 * self.hidden_size // self.num_mem_heads
-        self.num_query_groups = 2 * self.hidden_size // self.num_mem_heads
-        # self.n_mamba_heads = n_mamba_heads
+        self.num_attention_heads = num_attention_heads
+        self.kv_channels = self.hidden_size // self.num_attention_heads
+        self.num_query_groups = self.num_attention_heads
         self.activation_func = activation_func
         self.bias_gelu_fusion = bias_gelu_fusion
-        # self.hidden_mamba_act = hidden_mamba_act
         self.initializer_range = initializer_range
         self.rms_norm_eps = rms_norm_eps
 
@@ -198,22 +185,11 @@ class Zamba2Config(PretrainedConfig):
 
         self.use_cache = use_cache
         self.num_logits_to_keep = num_logits_to_keep
-
-        self.attn_layer_period = attn_layer_period
-        self.attn_layer_offset = attn_layer_offset
-        self.num_mem_heads = num_mem_heads
-
         self.use_mamba_kernels = use_mamba_kernels
-        # self.mamba_d_state = mamba_d_state
-        # self.mamba_d_conv = mamba_d_conv
-        # self.mamba_expand = mamba_expand
-        # self.mamba_dt_rank = math.ceil(self.hidden_size / 16) if mamba_dt_rank == "auto" else mamba_dt_rank
-        # self.mamba_conv_bias = mamba_conv_bias
-        # self.mamba_proj_bias = mamba_proj_bias
 
-        # self.rope_theta = rope_theta
 
-        self.layers_block_type = self._layers_block_type(num_hidden_layers, attn_layer_period, attn_layer_offset)
+        # Below, "m" means mamba layer, "g" means shared transformer layer followed by a mamba layer
+        self.layers_block_type = ['m', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'g', 'm', 'm']
 
         super().__init__(
             pad_token_id=pad_token_id,
@@ -223,13 +199,3 @@ class Zamba2Config(PretrainedConfig):
             **kwargs,
         )
 
-    def _layers_block_type(self, num_hidden_layers, attn_layer_period, attn_layer_offset):
-        layers = [
-            "mamba",
-            "mamba",
-            "attention+mamba",
-        ] + [
-            "attention+mamba" if i % attn_layer_period == attn_layer_offset else "mamba"
-            for i in range(num_hidden_layers - 3)
-        ]
-        return layers

@@ -132,7 +132,7 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
 def count_mem_blocks_in_config(config):
     num_gs = 0
     for val in config.layers_block_type:
-        if val == 'attention+mamba':
+        if val == 'g':
             num_gs +=1
     return num_gs
 
@@ -175,7 +175,7 @@ class HybridMambaAttentionDynamicCache(DynamicCache):
                     dtype=dtype,
                 )
             ]
-            if self.layers_block_type[i] == "attention+mamba":
+            if self.layers_block_type[i] == "g":
                 self.transformer_layers.append(i)
 
         self.key_cache = [torch.tensor([[]] * batch_size, device=device) for _ in range(config.num_hidden_layers)]
@@ -992,6 +992,7 @@ class Zamba2AttentionDecoderLayer(nn.Module):
                 Indices depicting the position of the input sequence tokens in the sequence.
         """
         hidden_states = torch.concatenate([hidden_states, original_hidden_states], dim=-1)
+        
         hidden_states = self.input_layernorm(hidden_states)
         hidden_states = hidden_states.transpose(0,1).contiguous()
         hidden_states = self.self_attn(hidden_states, attention_mask=attention_mask, inference_params=past_key_value, forward_layer_idx = layer_idx)
@@ -1214,9 +1215,9 @@ class Zamba2Model(Zamba2PreTrainedModel):
         linear_layers = []
         self.layers_block_type = config.layers_block_type
         for i in range(config.num_hidden_layers):
-            if config.layers_block_type[i] == "mamba":
+            if config.layers_block_type[i] == "m":
                 mamba_layers.append(Zamba2MambaDecoderLayer(config, layer_idx=i))
-            elif config.layers_block_type[i] == "attention+mamba":
+            elif config.layers_block_type[i] == "g":
                 linear_layers.append(nn.Linear(self.config.hidden_size, self.config.hidden_size, bias=False))
                 mamba_layers.append(Zamba2MambaDecoderLayer(config, layer_idx=i))
         self.mamba_layers = nn.ModuleList(mamba_layers)
@@ -1273,7 +1274,7 @@ class Zamba2Model(Zamba2PreTrainedModel):
 
         hidden_states = inputs_embeds
 
-        original_hidden_states = torch.clone(inputs_embeds)
+        original_hidden_states = torch.clone(inputs_embeds).transpose(0, 1) ###
         # original_hidden_states: word embedding output that will be concatenated with hidden activations to form the input of the shared transformer layer
 
         if use_cache and past_key_values is None:
@@ -1295,12 +1296,12 @@ class Zamba2Model(Zamba2PreTrainedModel):
         mamba_layers = iter(self.mamba_layers)
         linear_layers = iter(self.linear_layers)
         block_count = 0
-
+        hidden_states = hidden_states.transpose(0, 1) ###
         for layer_idx, layer_type in enumerate(self.layers_block_type):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
-            if layer_type == "attention+mamba":
+            if layer_type == "g":
                 if self.gradient_checkpointing and self.training:
                     layer_outputs = self._gradient_checkpointing_func(
                         self.blocks[block_count % 2].__call__,
