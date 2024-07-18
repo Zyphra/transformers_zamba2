@@ -18,7 +18,7 @@ except ImportError:
     causal_conv1d_update = None
     
 
-from .ops.selective_scan_interface import selective_scan_fn, mamba_inner_fn, SELECTIVE_SCAN_CUDA_IMPORT_FAILED
+# from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, mamba_inner_fn, SELECTIVE_SCAN_CUDA_IMPORT_FAILED
 
 # if SELECTIVE_SCAN_CUDA_IMPORT_FAILED:
 #     from ops.selective_scan_interface import selective_scan_ref
@@ -26,26 +26,26 @@ from .ops.selective_scan_interface import selective_scan_fn, mamba_inner_fn, SEL
 #     mamba_inner_fn = None
 
 try:
-    from .ops.triton.selective_state_update import selective_state_update
+    from mamba_ssm.ops.triton.selective_state_update import selective_state_update
 except ImportError:
     selective_state_update = None
 
-try:
-    from .ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
-except ImportError:
-    RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
+# try:
+#     from mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
+# except ImportError:
+#     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
 
 
 
 try:
-    from .ops.triton.selective_state_update import selective_state_update
+    from mamba_ssm.ops.triton.selective_state_update import selective_state_update
 except ImportError:
     selective_state_update = None
 
-from .ops.triton.layernorm_gated import RMSNorm as RMSNormGated
+from mamba_ssm.ops.triton.layernorm_gated import RMSNorm as RMSNormGated
 
-from .ops.triton.ssd_combined import mamba_chunk_scan_combined
-from .ops.triton.ssd_combined import mamba_split_conv1d_scan_combined
+from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+from mamba_ssm.ops.triton.ssd_combined import mamba_split_conv1d_scan_combined
 
 
 class Mamba2Layer(nn.Module):
