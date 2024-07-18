@@ -6,8 +6,8 @@ from typing import Union
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
-from utils import bias_gelu_impl
-from mamba_config import MambaConfig
+from .utils import bias_gelu_impl
+from .mamba_config import MambaConfig
 
 class MLP(nn.Module):
 
@@ -35,10 +35,10 @@ class MLP(nn.Module):
                 # x_ = torch.chunk(x, 4, dim=-1)
                 # x = (torch.cat((x_[0], x_[2]), dim=-1), torch.cat((x_[1], x_[3]), dim=-1))
 
-                return self.config.activation_func(x[0]) * x[1]
+                return F.gelu(x[0]) * x[1]
             self.activation_func = glu
         else:
-            self.activation_func = self.config.activation_func
+            self.activation_func = F.gelu
 
 
         self.linear_fc2 = nn.Linear(ffn_hidden_size_2, self.config.hidden_size, bias = self.config.add_bias_linear)

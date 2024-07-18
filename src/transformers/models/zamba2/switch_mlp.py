@@ -4,8 +4,8 @@ import pickle
 import os
 import torch.nn.functional as F
 
-from mamba_config import MambaConfig
-from mlp import MLP
+from .mamba_config import MambaConfig
+from .mlp import MLP
 
 def sinkhorn(cost, tol=0.0001):
     "Sinkhorn based MoE routing function"

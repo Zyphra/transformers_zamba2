@@ -1469,7 +1469,7 @@ class GenerationMixin:
         order to save memory (because no back and forth `to_legacy_cache` and `from_legacy_cache` will be performed
         for `HybridMambaAttentionDynamicCache`).
         """
-        return self._supports_cache_class and "jamba" not in self.__class__.__name__.lower()
+        return self._supports_cache_class and "jamba" not in self.__class__.__name__.lower() and "zamba2" not in self.__class__.__name__.lower()
 
     def _prepare_special_tokens(
         self,
@@ -2902,6 +2902,7 @@ class GenerationMixin:
 
         while self._has_unfinished_sequences(this_peer_finished, synced_gpus, device=input_ids.device):
             # prepare model inputs
+            model_kwargs['max_new_tokens'] = generation_config.max_new_tokens
             model_inputs = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
 
             # prepare variable output controls (note: some models won't accept all output controls)
@@ -3147,6 +3148,7 @@ class GenerationMixin:
                         "xlnet",
                         "cpm",
                         "jamba",
+                        "zamba2",
                     ]
                 ):
                     raise RuntimeError(

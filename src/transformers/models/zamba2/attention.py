@@ -4,8 +4,8 @@ from typing import Union
 import transformer_engine as te
 
 import torch
-from rotary import *
-from enums import AttnMaskType
+from .rotary import *
+from .enums import AttnMaskType
 
 class CausalSelfAttention(nn.Module):
 

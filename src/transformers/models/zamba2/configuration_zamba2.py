@@ -134,7 +134,6 @@ class Zamba2Config(PretrainedConfig):
         num_hidden_layers=54,
         num_attention_heads=32,
         num_key_value_heads=None,
-        activation_func=F.gelu,
         initializer_range=0.02,
         rms_norm_eps=1e-5,
         use_cache=True,
@@ -175,7 +174,6 @@ class Zamba2Config(PretrainedConfig):
         self.num_attention_heads = num_attention_heads
         self.kv_channels = self.hidden_size // self.num_attention_heads
         self.num_query_groups = self.num_attention_heads
-        self.activation_func = activation_func
         self.bias_gelu_fusion = bias_gelu_fusion
         self.initializer_range = initializer_range
         self.rms_norm_eps = rms_norm_eps

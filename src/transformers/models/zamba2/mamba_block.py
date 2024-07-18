@@ -21,27 +21,27 @@ except ImportError:
     causal_conv1d_fn, causal_conv1d_update = None, None
 
 try:
-    from ops.selective_scan_interface import selective_scan_fn, mamba_inner_fn
+    from .ops.selective_scan_interface import selective_scan_fn, mamba_inner_fn
 except ImportError:
     selective_scan_fn, mamba_inner_fn = None, None
 
 try:
-    from ops.triton.selective_state_update import selective_state_update
+    from .ops.triton.selective_state_update import selective_state_update
 except ImportError:
     selective_state_update = None
 
 try:
-    from ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
+    from .ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
 except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
 
-from mamba_layer import MambaLayer
-from mamba2_layer import Mamba2Layer
-from mamba_config import MambaConfig
-from mlp import MLP
-from attention import CausalSelfAttention
-from switch_mlp import SwitchMLP
-from rotary import RotaryEmbedding
+from .mamba_layer import MambaLayer
+from .mamba2_layer import Mamba2Layer
+from .mamba_config import MambaConfig
+from .mlp import MLP
+from .attention import CausalSelfAttention
+from .switch_mlp import SwitchMLP
+from .rotary import RotaryEmbedding
 
 
 class MambaBlock(nn.Module):

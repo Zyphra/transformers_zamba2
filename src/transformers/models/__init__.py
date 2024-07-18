@@ -264,5 +264,6 @@ from . import (
     xmod,
     yolos,
     yoso,
+    zamba2,
     zoedepth,
 )

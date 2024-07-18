@@ -8,9 +8,9 @@ import torch.nn.functional as F
 from torch import Tensor
 import math
 import os
-from mamba_block import MambaBlock, MambaDecoder
-from mamba_config import MambaConfig
-from hf_utils import *
+from .mamba_block import MambaBlock, MambaDecoder
+from .mamba_config import MambaConfig
+from .hf_utils import *
 import os, json
 from transformers.utils import WEIGHTS_NAME, CONFIG_NAME
 from transformers.utils.hub import cached_file

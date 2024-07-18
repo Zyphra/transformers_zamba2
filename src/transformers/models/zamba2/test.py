@@ -1,5 +1,5 @@
-from mamba_model import MambaModel
-from mamba_config import MambaConfig
+from .mamba_model import MambaModel
+from .mamba_config import MambaConfig
 import torch
 
 config = MambaConfig(
