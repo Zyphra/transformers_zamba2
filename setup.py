@@ -189,6 +189,11 @@ _deps = [
     "urllib3<2.0.0",
     "uvicorn",
     "pytest-rich",
+    "ninja",
+    "einops",
+    "triton",
+    "causal-conv1d==1.2.0.post2",
+    "mamba-ssm==2.2.2",
 ]
 
 
@@ -426,6 +431,11 @@ install_requires = [
     deps["tokenizers"],
     deps["safetensors"],
     deps["tqdm"],  # progress bars in model download and training scripts
+    deps["mamba-ssm"],
+    deps["ninja"],
+    deps["einops"],
+    deps["triton"],
+    deps["causal-conv1d"],
 ]
 
 setup(

@@ -7,16 +7,16 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 from .utils import bias_gelu_impl
-from .mamba_config import MambaConfig
+from .configuration_zamba2 import Zamba2Config
 
 class MLP(nn.Module):
 
-    def __init__(self, config: MambaConfig,is_expert: bool = False, layer_idx=None, num_mem_blocks = None):
+    def __init__(self, config: Zamba2Config,is_expert: bool = False, layer_idx=None, num_mem_blocks = None):
         super().__init__()
 
         self.num_mem_blocks = num_mem_blocks
         
-        self.config: MambaConfig = config
+        self.config: Zamba2Config = config
         self.layer = layer_idx
         ffn_hidden_size_1 = self.config.ffn_hidden_size
         ffn_hidden_size_2 = self.config.ffn_hidden_size
