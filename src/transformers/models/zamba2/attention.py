@@ -9,7 +9,7 @@ from .enums import AttnMaskType
 
 class CausalSelfAttention(nn.Module):
 
-    def __init__(self, config, layer_number, attn_mask_type=AttnMaskType.padding, **kwargs):
+    def __init__(self, config, layer_number):
         super().__init__()
         assert config.hidden_size % config.num_attention_heads == 0
         self.config = config
@@ -61,16 +61,15 @@ class CausalSelfAttention(nn.Module):
                 self.linear_v_lora_A_list.append(linear_v_lora_A)
                 self.linear_v_lora_B_list.append(linear_v_lora_B)
 
-    def _allocate_memory(self, inference_max_sequence_length, batch_size, dtype):
-        """Allocate memory to store kv cache during inference."""
-
+    def _allocate_memory(self, inference_max_sequence_length, batch_size, dtype, device):
+        """Allocate memory to store kv cache during inference."""     
         return torch.empty(
             inference_max_sequence_length,
             batch_size,
             self.num_query_groups_per_partition,
             self.hidden_size_per_attention_head * 2,
             dtype=dtype,
-            device=torch.cuda.current_device(),
+            device=device,
         )
 
     def _adjust_key_value_for_inference(self, inference_params, key, value, rotary_pos_emb, layer_number):
@@ -93,10 +92,10 @@ class CausalSelfAttention(nn.Module):
             inf_max_seq_length = inference_params.max_sequence_length
             inf_max_batch_size = inference_params.max_batch_size
             inference_key_memory = self._allocate_memory(
-                inf_max_seq_length, inf_max_batch_size, key.dtype
+                inf_max_seq_length, inf_max_batch_size, key.dtype, inference_params.device
             )
             inference_value_memory = self._allocate_memory(
-                inf_max_seq_length, inf_max_batch_size, value.dtype
+                inf_max_seq_length, inf_max_batch_size, value.dtype, inference_params.device
             )
             inference_params.key_value_memory_dict[layer_number] = (
                 inference_key_memory,

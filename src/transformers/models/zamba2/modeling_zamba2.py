@@ -233,8 +233,9 @@ def count_mem_blocks_in_config(config):
 
 class HybridMambaAttentionDynamicCache:
     ### This is actually a static cache
-    def __init__(self, max_batch_size, max_sequence_length): ###, dtype=torch.bfloat16):
+    def __init__(self, max_batch_size, max_sequence_length, device=None): ###, dtype=torch.bfloat16):
         ### self.dtype = dtype
+        self.device = device
         self.max_sequence_length = max_sequence_length
         self.max_batch_size = max_batch_size
         self.sequence_len_offset = 0
@@ -1077,7 +1078,6 @@ class Zamba2MambaDecoderLayer(nn.Module):
             cache_position (`torch.LongTensor` of shape `(sequence_length)`, *optional*):
                 Indices depicting the position of the input sequence tokens in the sequence.
         """
-
         residual = hidden_states
 
         # `transformer_hidden_states` is the output from shared transformer + linear layer (see fig. 2 in https://arxiv.org/pdf/2405.16712).
@@ -1086,7 +1086,6 @@ class Zamba2MambaDecoderLayer(nn.Module):
             hidden_states + transformer_hidden_states if transformer_hidden_states is not None else hidden_states
         )
         hidden_states = self.input_layernorm(hidden_states)
-
         hidden_states = self.mamba(
             u=hidden_states,
             inference_params=past_key_value,
@@ -1304,7 +1303,6 @@ class Zamba2Model(Zamba2PreTrainedModel):
 
         original_hidden_states = torch.clone(inputs_embeds)#.transpose(0, 1) ###
         # original_hidden_states: word embedding output that will be concatenated with hidden activations to form the input of the shared transformer layer
-
         if use_cache and past_key_values is None:
             logger.warning_once(
                 "Zamba requires an initialized `HybridMambaAttentionDynamicCache` to return a cache. None was "
@@ -1357,7 +1355,7 @@ class Zamba2Model(Zamba2PreTrainedModel):
                         cache_position=cache_position,
                     )
                 block_count += 1
-                transformer_hidden_states = layer_outputs[0]
+                transformer_hidden_states = layer_outputs[0]         
                 if output_attentions:
                     if layer_outputs[1] is not None:
                         all_self_attns += (layer_outputs[1],)
@@ -1372,7 +1370,6 @@ class Zamba2Model(Zamba2PreTrainedModel):
                     )
             else:
                 transformer_hidden_states = None
-
             if self.gradient_checkpointing and self.training:
                 layer_outputs = self._gradient_checkpointing_func(
                     next(mamba_layers).__call__,
@@ -1397,7 +1394,6 @@ class Zamba2Model(Zamba2PreTrainedModel):
                     cache_position=cache_position,
                 )
             hidden_states = layer_outputs[0]
-
         hidden_states = self.final_layernorm(hidden_states)
 
         # add hidden states from the last decoder layer
@@ -1560,7 +1556,6 @@ class Zamba2ForCausalLM(Zamba2PreTrainedModel):
         else:
             logits = self.lm_head(hidden_states[..., -num_logits_to_keep:, :])
         logits = logits.float()
-
         loss = None
         if labels is not None:
             # Shift so that tokens < n predict n
@@ -1629,7 +1624,7 @@ class Zamba2ForCausalLM(Zamba2PreTrainedModel):
             # )
             max_sequence_length = max_new_tokens + input_ids.shape[1]
             past_key_values = HybridMambaAttentionDynamicCache(
-                input_ids.shape[0], max_sequence_length
+                input_ids.shape[0], max_sequence_length, device=self.device
             )
 
         position_ids = kwargs.get("position_ids", None)
