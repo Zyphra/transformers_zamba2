@@ -170,7 +170,7 @@ class Mamba2Layer(nn.Module):
         conv_state, ssm_state = None, None
         if inference_params is not None:
             conv_state, ssm_state = self._get_states_from_cache(inference_params, batch)
-            if inference_params.sequence_len_offset > 0:
+            if inference_params.has_previous_state:
                 # The states are updated inplace
                 out, _, _ = self.step(u, conv_state, ssm_state)
                 return out
