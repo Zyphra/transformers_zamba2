@@ -17,7 +17,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""PyTorch Zamba model."""
 
 import inspect
 import math
@@ -54,7 +53,6 @@ from ...utils.import_utils import (
 )
 from .configuration_zamba2 import Zamba2Config
 from .mamba2_layer import Mamba2Layer
-from .mlp import MLP
 
 if is_flash_attn_2_available():
     from flash_attn import flash_attn_func, flash_attn_varlen_func
@@ -97,11 +95,11 @@ def _get_unpad_data(attention_mask):
     )
 
 
-# Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Zamba
+# Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Zamba2
 class Zamba2RMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
         """
-        ZambaRMSNorm is equivalent to T5LayerNorm
+        Zamba2RMSNorm is equivalent to T5LayerNorm
         """
         super().__init__()
         self.weight = nn.Parameter(torch.ones(hidden_size))
@@ -153,7 +151,6 @@ class HybridMambaAttentionDynamicCache:
         self.max_batch_size = batch_size
         self.sequence_len_offset = 0
         self.batch_size_offset = 0
-        ### self.key_value_memory_dict = {}
         self.key_value_memory_dict_mamba = {}
 
         self.transformer_layers = []
@@ -163,23 +160,6 @@ class HybridMambaAttentionDynamicCache:
 
         self.key_cache = [torch.tensor([[]] * batch_size, device=device) for _ in range(config.num_hidden_layers)]
         self.value_cache = [torch.tensor([[]] * batch_size, device=device) for _ in range(config.num_hidden_layers)]
-
-    # def swap_key_value_dict(self, batch_idx):
-    #     "swap between batches"
-    #     if len(self.key_value_memory_dict) == 0:
-    #         raise ValueError("should not swap when dict in empty")
-
-    #     for layer_number in self.key_value_memory_dict.keys():
-    #         inference_key_memory, inference_value_memory = self.key_value_memory_dict[layer_number]
-    #         assert (
-    #             len(batch_idx) == inference_key_memory.shape[1]
-    #         )
-    #         new_inference_key_memory = inference_key_memory[:, batch_idx]
-    #         new_inference_value_memory = inference_value_memory[:, batch_idx]
-    #         self.key_value_memory_dict[layer_number] = (
-    #             new_inference_key_memory,
-    #             new_inference_value_memory,
-    #         )     
 
     # Copied from transformers.models.jamba.modeling_jamba.HybridMambaAttentionDynamicCache.update
     def update(
@@ -255,8 +235,6 @@ class Zamba2Attention(nn.Module):
         self.head_dim = 2 * self.hidden_size // self.num_heads
         self.num_key_value_heads = config.num_key_value_heads
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
-        # self.max_position_embeddings = config.max_position_embeddings
-        # self.rope_theta = config.rope_theta
         self.is_causal = True
         self.attention_dropout = config.attention_dropout
         self.layer_block_map = layer_type_list(config)
@@ -337,7 +315,7 @@ class Zamba2Attention(nn.Module):
 # dropped use_sliding_windows from the arguments of self._flash_attention_forward
 class Zamba2FlashAttention2(Zamba2Attention):
     """
-    Zamba flash attention module. This module inherits from `ZambaAttention` as the weights of the module stays
+    Zamba2 flash attention module. This module inherits from `Zamba2Attention` as the weights of the module stays
     untouched. The only required change would be on the forward pass where it needs to correctly call the public API of
     flash attention and deal with padding tokens in case the input contains any of them.
     """
@@ -580,8 +558,8 @@ class Zamba2FlashAttention2(Zamba2Attention):
 # added scale = 1 / (query_states.shape[-1]/2)**0.5 to the arguments of torch.nn.functional.scaled_dot_product_attention
 class Zamba2SdpaAttention(Zamba2Attention):
     """
-    Zamba attention module using torch.nn.functional.scaled_dot_product_attention. This module inherits from
-    `ZambaAttention` as the weights of the module stays untouched. The only changes are on the forward pass to adapt to
+    Zamba2 attention module using torch.nn.functional.scaled_dot_product_attention. This module inherits from
+    `Zamba2Attention` as the weights of the module stays untouched. The only changes are on the forward pass to adapt to
     SDPA API.
     """
 
@@ -599,7 +577,7 @@ class Zamba2SdpaAttention(Zamba2Attention):
         if output_attentions:
             # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
             logger.warning_once(
-                "ZambaModel is using ZambaSdpaAttention, but `torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to the manual attention implementation, "
+                "Zamba2Model is using Zamba2SdpaAttention, but `torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to the manual attention implementation, "
                 'but specifying the manual implementation will be required from Transformers version v5.0.0 onwards. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
             )
             return super().forward(
@@ -667,290 +645,65 @@ ZAMBA2_ATTENTION_CLASSES = {
 }
 
 
-class Zamba2MambaMixer(nn.Module):
-    """
-    Compute ∆, A, B, C, and D the state space parameters and compute the `contextualized_states`.
-    A, D are input independent (see Mamba paper [1] Section 3.5.2 "Interpretation of A" for why A isn't selective)
-    ∆, B, C are input-dependent (this is a key difference between Mamba and the linear time invariant S4,
-    and is why Mamba is called **selective** state spaces)
-    """
-
-    def __init__(self, config: Zamba2Config, layer_idx):
-        super().__init__()
-        self.config = config
-        self.layer_idx = layer_idx
-        self.hidden_size = config.hidden_size
-        self.ssm_state_size = config.mamba_d_state
-        self.conv_kernel_size = config.mamba_d_conv
-        self.intermediate_size = config.mamba_expand * config.hidden_size
-        self.time_step_rank = config.mamba_dt_rank
-        self.n_mamba_heads = config.n_mamba_heads
-        self.use_conv_bias = config.mamba_conv_bias
-        self.use_bias = config.mamba_proj_bias
-        self.conv1d = nn.Conv1d(
-            in_channels=self.intermediate_size,
-            out_channels=self.intermediate_size,
-            bias=self.use_conv_bias,
-            kernel_size=self.conv_kernel_size,
-            groups=self.intermediate_size,
-            padding=self.conv_kernel_size - 1,
-        )
-
-        self.activation = config.hidden_mamba_act
-        self.act = ACT2FN[config.hidden_mamba_act]
-
-        self.use_fast_kernels = config.use_mamba_kernels
-
-        # projection of the input hidden states
-        self.in_proj = nn.Linear(self.hidden_size, self.intermediate_size * 2, bias=self.use_bias)
-        # selective projection used to make dt, B and C input dependent
-        self.x_proj_weight = nn.Parameter(
-            (
-                torch.rand(
-                    self.n_mamba_heads,
-                    self.time_step_rank + self.ssm_state_size * 2,
-                    self.intermediate_size // self.n_mamba_heads,
-                )
-                - 0.5
-            )
-            * 2
-            / self.intermediate_size**0.5
-        )
-        # time step projection (discretization)
-        self.dt_proj_weight = nn.Parameter(
-            (torch.rand(self.n_mamba_heads, self.intermediate_size // self.n_mamba_heads, self.time_step_rank) - 0.5)
-            * 2
-            / self.time_step_rank**0.5
-        )  # (h d dt_rank)
-        self.dt_proj_bias = nn.Parameter(
-            torch.zeros(self.n_mamba_heads, self.intermediate_size // self.n_mamba_heads)
-        )  # (h d)
-
-        # S4D real initialization. These are not discretized!
-        # The core is to load them, compute the discrete states, then write the updated state. Keeps the memory bounded
-        A = torch.arange(1, self.ssm_state_size + 1, dtype=torch.float32)[None, :]
-        A = A.expand(self.intermediate_size, -1).contiguous()
-        self.A_log = nn.Parameter(
-            torch.log(A).reshape(self.n_mamba_heads, self.intermediate_size // self.n_mamba_heads, -1)
-        )
-        self.D = nn.Parameter(torch.ones(self.n_mamba_heads, self.intermediate_size // self.n_mamba_heads))
-        self.out_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=self.use_bias)
-
-        if not is_fast_path_available:
-            logger.warning_once(
-                "The fast path is not available because on of `(selective_state_update, selective_scan_fn, causal_conv1d_fn, causal_conv1d_update, mamba_inner_fn)`"
-                " is None. To install follow https://github.com/state-spaces/mamba/#installation and"
-                " https://github.com/Dao-AILab/causal-conv1d. If you want to use the naive implementation, set `use_mamba_kernels=False` in the model config"
-            )
-
-    def cuda_kernels_forward(self, hidden_states: torch.Tensor, cache_params: HybridMambaAttentionDynamicCache = None):
-        batch_size, seq_len, _ = hidden_states.shape
-        use_precomputed_states = cache_params is not None and cache_params.has_previous_state and seq_len == 1
-
-        # 1. Gated linear projection
-        projected_states = self.in_proj(hidden_states).transpose(1, 2)
-
-        hidden_states, gate = projected_states.view(batch_size, -1, 2, seq_len).chunk(2, dim=2)
-        hidden_states = hidden_states.squeeze(2).contiguous()
-        gate = gate.squeeze(2)
-        gate = gate.reshape(batch_size, self.n_mamba_heads, -1, seq_len).transpose(0, 1)  # (h b d l)
-
-        # 2. Convolution sequence transformation
-        conv_weights = self.conv1d.weight.view(self.conv1d.weight.size(0), self.conv1d.weight.size(2))
-        if use_precomputed_states:
-            hidden_states = causal_conv1d_update(
-                hidden_states.squeeze(-1),
-                cache_params.conv_states[self.layer_idx],
-                conv_weights,
-                self.conv1d.bias,
-                self.activation,
-            )
-            hidden_states = hidden_states.unsqueeze(-1)
-        else:
-            if cache_params is not None:
-                conv_states = nn.functional.pad(hidden_states, (self.conv_kernel_size - hidden_states.shape[-1], 0))
-                cache_params.conv_states[self.layer_idx].copy_(conv_states)
-            hidden_states = causal_conv1d_fn(hidden_states, conv_weights, self.conv1d.bias, activation=self.activation)
-
-        # 3. State Space Model sequence transformation
-        # 3.a. input varying initialization of time_step, B and C
-
-        hidden_states = hidden_states.reshape(
-            -1, self.n_mamba_heads, self.intermediate_size // self.n_mamba_heads, seq_len
-        ).transpose(0, 1)  # (h b d l)
-        ssm_parameters = (self.x_proj_weight[:, None, :, :] @ hidden_states).transpose(-1, -2)  # (h b l d)
-
-        time_step, B, C = torch.split(
-            ssm_parameters, [self.time_step_rank, self.ssm_state_size, self.ssm_state_size], dim=-1
-        )  # (h b l d)
-
-        discrete_time_step = self.dt_proj_weight[:, None] @ time_step.transpose(-1, -2)  # (h b d l)
-
-        A = -torch.exp(self.A_log.float())
-
-        # 3.c perform the recurrence y ← SSM(A, B, C)(x)
-        time_proj_bias = self.dt_proj_bias.float() if self.dt_proj_bias is not None else None
-        scan_outputs = torch.empty((batch_size, 0, seq_len), device=hidden_states.device, dtype=hidden_states.dtype)
-
-        if use_precomputed_states:
-            for n in range(self.n_mamba_heads):
-                scan_outputs_ = selective_state_update(
-                    cache_params.ssm_states[self.layer_idx][:, n],
-                    hidden_states[n, ..., 0],
-                    discrete_time_step[n, ..., 0],
-                    A[n],
-                    B[n, :, 0],
-                    C[n, :, 0],
-                    self.D[n],
-                    gate[n, ..., 0],
-                    time_proj_bias[n],
-                    dt_softplus=True,
-                ).unsqueeze(-1)
-                scan_outputs = torch.cat((scan_outputs, scan_outputs_), dim=1)
-
-        else:
-            ssm_state = torch.empty(
-                (batch_size, 0, self.intermediate_size // self.n_mamba_heads, self.ssm_state_size),
-                device=hidden_states.device,
-                dtype=hidden_states.dtype,
-            )
-            for n in range(self.n_mamba_heads):
-                scan_outputs_, ssm_state_ = selective_scan_fn(
-                    hidden_states[n],
-                    discrete_time_step[n],
-                    A[n],
-                    B[n].transpose(1, 2),
-                    C[n].transpose(1, 2),
-                    self.D[n].float(),
-                    gate[n],
-                    time_proj_bias[n],
-                    delta_softplus=True,
-                    return_last_state=True,
-                )
-                scan_outputs = torch.cat((scan_outputs, scan_outputs_), dim=1).contiguous()
-                ssm_state = torch.cat((ssm_state, ssm_state_.unsqueeze(1)), dim=1)
-            if ssm_state is not None and cache_params is not None:
-                cache_params.ssm_states[self.layer_idx].copy_(ssm_state)
-
-        # 4. Final linear projection
-        contextualized_states = self.out_proj(scan_outputs.transpose(1, 2))
-        return contextualized_states
-
-    def slow_forward(self, input_states, cache_params: HybridMambaAttentionDynamicCache = None):
-        batch_size, seq_len, _ = input_states.shape
-        dtype = input_states.dtype
-        # 1. Gated linear projection
-        projected_states = self.in_proj(input_states).transpose(1, 2)  # (b d l)
-
-        hidden_states, gate = projected_states.view(batch_size, -1, 2, seq_len).chunk(2, dim=2)
-        hidden_states = hidden_states.squeeze(2).contiguous()
-        gate = gate.squeeze(2)
-        gate = gate.reshape(batch_size, self.n_mamba_heads, -1, seq_len).transpose(0, 1)  # (h b d l)
-
-        use_cache = isinstance(cache_params, HybridMambaAttentionDynamicCache)
-        # 2. Convolution sequence transformation
-        if use_cache and cache_params.ssm_states[self.layer_idx].shape[0] == batch_size:
-            if self.training:
-                # In training mode, we don't want to perform in-place operations on ssm_state so we can compute the backwards pass
-                ssm_state = cache_params.ssm_states[self.layer_idx].clone()
-            else:
-                ssm_state = cache_params.ssm_states[self.layer_idx]
-
-            ssm_state = ssm_state.to(hidden_states.device)
-
-            if (
-                cache_params.has_previous_state
-                and seq_len == 1
-                and cache_params.conv_states[self.layer_idx].shape[0] == batch_size
-            ):
-                conv_state = cache_params.conv_states[self.layer_idx]  # (b d conv_size)
-                conv_state = torch.roll(conv_state, shifts=-1, dims=-1)
-                conv_state[:, :, -1] = hidden_states[:, :, 0]
-                cache_params.conv_states[self.layer_idx] = conv_state
-                hidden_states = torch.sum(conv_state * self.conv1d.weight[:, 0, :], dim=-1)
-                if self.use_conv_bias:
-                    hidden_states += self.conv1d.bias
-                hidden_states = self.act(hidden_states).to(dtype).unsqueeze(-1)  # (b d 1) : decoding
-            else:
-                conv_state = nn.functional.pad(hidden_states, (self.conv_kernel_size - hidden_states.shape[-1], 0))
-                cache_params.conv_states[self.layer_idx] = conv_state
-                hidden_states = self.act(self.conv1d(hidden_states)[..., :seq_len])  # (b d l)
-        else:
-            ssm_state = torch.zeros(
-                (batch_size, self.n_mamba_heads, self.intermediate_size // self.n_mamba_heads, self.ssm_state_size),
-                device=hidden_states.device,
-                dtype=dtype,
-            )  # (b h d l)
-            hidden_states = self.act(self.conv1d(hidden_states)[..., :seq_len])  # (b d l)
-
-        # 3. State Space Model sequence transformation
-        # 3.a. Selection:  [batch, seq_len, self.time_step_rank + self.ssm_state_size * 2]
-        hidden_states = hidden_states.reshape(
-            -1, self.n_mamba_heads, self.intermediate_size // self.n_mamba_heads, seq_len
-        ).transpose(0, 1)  # (h b d l)
-        ssm_parameters = (self.x_proj_weight[:, None, :, :] @ hidden_states).transpose(-1, -2)  # (h b l d)
-
-        time_step, B, C = torch.split(
-            ssm_parameters, [self.time_step_rank, self.ssm_state_size, self.ssm_state_size], dim=-1
-        )  # (h b l d)
-
-        discrete_time_step = (self.dt_proj_weight[:, None] @ time_step.transpose(-1, -2)) + self.dt_proj_bias[
-            :, None, :, None
-        ]  # (h b d l)
-
-        discrete_time_step = nn.functional.softplus(discrete_time_step)
-
-        # 3.b. Discretization: B and C to [batch, seq_len, intermediate_size, ssm_state_size] (SRAM)
-        A = -torch.exp(self.A_log.float())
-        discrete_A = torch.exp(A[:, None, :, None, :] * discrete_time_step[:, :, :, :, None])  # (h b d l state)
-        discrete_B = discrete_time_step[:, :, :, :, None] * B[:, :, None, :, :].float()  # (h b d l state)
-        deltaB_u = discrete_B * hidden_states[:, :, :, :, None].float()  # (h b d l state)
-        # 3.c perform the recurrence y ← SSM(A, B, C)(x)
-        scan_outputs = []
-        for i in range(seq_len):
-            ssm_state = discrete_A[:, :, :, i, :].transpose(0, 1) * ssm_state + deltaB_u[:, :, :, i, :].transpose(
-                0, 1
-            )  # (h b d state)
-            scan_output = torch.matmul(ssm_state.transpose(0, 1).to(dtype), C[:, :, i, :].unsqueeze(-1))  # (h b d 1)
-            scan_outputs.append(scan_output[:, :, :, 0])
-        scan_output = torch.stack(scan_outputs, dim=-1)  # (h b d l)
-        scan_output = scan_output + (hidden_states * self.D[:, None, :, None])  # (h b d l)
-        scan_output = scan_output * self.act(gate)
-
-        if use_cache:
-            cache_params.ssm_states[self.layer_idx] = ssm_state
-
-        # 4. Final linear projection
-        contextualized_states = self.out_proj(
-            scan_output.transpose(0, 1).reshape(batch_size, -1, seq_len).transpose(1, 2)
-        )  # (b l d)
-        return contextualized_states
-
-    def forward(self, hidden_states, cache_params: HybridMambaAttentionDynamicCache = None):
-        if self.use_fast_kernels:
-            if not is_fast_path_available or "cuda" not in self.x_proj_weight.device.type:
-                raise ValueError(
-                    "Fast Mamba kernels are not available. Make sure to they are installed and that "
-                    "the mamba module is on a CUDA device. lease run 'pip install causal-conv1d>=1.2.0' "
-                    "and 'pip install mamba-ssm', or set use_fast_kernels=False in the model's config."
-                )
-            return self.cuda_kernels_forward(hidden_states, cache_params)
-        return self.slow_forward(hidden_states, cache_params)
-
-
 class Zamba2MLP(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.hidden_size = config.hidden_size
-        self.intermediate_size = config.intermediate_size
-        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
-        self.act_fn = ACT2FN[config.hidden_act]
 
-    def forward(self, x):
-        return self.down_proj(self.act_fn(self.up_proj(x)) * self.gate_proj(x))
+    def __init__(self, config: Zamba2Config,is_expert: bool = False, layer_idx=None, num_mem_blocks = None):
+        super().__init__()
+
+        self.num_mem_blocks = num_mem_blocks
+        
+        self.config: Zamba2Config = config
+        self.layer = layer_idx
+        ffn_hidden_size_1 = self.config.ffn_hidden_size
+        ffn_hidden_size_2 = self.config.ffn_hidden_size
+        # If this is a gated linear unit we double the output width, see https://arxiv.org/pdf/2002.05202.pdf
+        if self.config.gated_linear_unit:
+            ffn_hidden_size_1 *= 2
+
+        if self.layer == -1:
+            ffn_hidden_size_1 = 8 * self.config.hidden_size
+
+        self.linear_fc1 = nn.Linear(self.config.hidden_size, ffn_hidden_size_1, bias = self.config.add_bias_linear)
+        if self.config.gated_linear_unit or self.layer == -1:
+
+            def glu(x):
+                x = torch.chunk(x, 2, dim=-1)
+
+                return F.gelu(x[0]) * x[1]
+            self.activation_func = glu
+        else:
+            self.activation_func = F.gelu
+
+
+        self.linear_fc2 = nn.Linear(ffn_hidden_size_2, self.config.hidden_size, bias = self.config.add_bias_linear)
+        
+        if self.config.use_shared_block_lora:
+            self.linear_fc1_lora_A_list = nn.ParameterList([])
+            self.linear_fc1_lora_B_list = nn.ParameterList([])
+            for i in range(self.num_mem_blocks):
+                linear_fc1_lora_A = nn.Linear(self.config.hidden_size, self.config.lora_rank, bias = False)
+                linear_fc1_lora_B = nn.Linear(self.config.lora_rank, ffn_hidden_size_1, bias = False)
+                self.linear_fc1_lora_A_list.append(linear_fc1_lora_A)
+                self.linear_fc1_lora_B_list.append(linear_fc1_lora_B)
+
+    def forward(self, hidden_states, inference_params=None, forward_layer_idx = None):
+
+        # [s, b, 4 * h/p]
+        if self.config.use_shared_block_lora:
+            linear_fc1_lora_A = self.linear_fc1_lora_A_list[forward_layer_idx]
+            linear_fc1_lora_B = self.linear_fc1_lora_B_list[forward_layer_idx]
+            lora_output = linear_fc1_lora_A(hidden_states)
+            lora_output= linear_fc1_lora_B(lora_output)
+            intermediate_parallel = self.linear_fc1(hidden_states)
+            intermediate_parallel = intermediate_parallel + lora_output
+        else:
+            intermediate_parallel= self.linear_fc1(hidden_states)
+
+        intermediate_parallel = self.activation_func(intermediate_parallel)
+        # [s, b, h]
+        output = self.linear_fc2(intermediate_parallel)
+
+        return output
 
 
 class Zamba2AttentionDecoderLayer(nn.Module):
@@ -958,7 +711,7 @@ class Zamba2AttentionDecoderLayer(nn.Module):
         super().__init__()
         num_gs = count_mem_blocks_in_config(config)
         self.self_attn = ZAMBA2_ATTENTION_CLASSES[config._attn_implementation](config, layer_idx=-1)
-        self.feed_forward = MLP(config, layer_idx=-1, num_mem_blocks = num_gs)
+        self.feed_forward = Zamba2MLP(config, layer_idx=-1, num_mem_blocks = num_gs)
         self.input_layernorm = Zamba2RMSNorm(2 * config.hidden_size, eps=config.rms_norm_eps)
         self.pre_ff_layernorm = Zamba2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
@@ -1018,7 +771,6 @@ class Zamba2MambaDecoderLayer(nn.Module):
         super().__init__()
         factory_kwargs = {}
         self.mamba = Mamba2Layer(config=config, layer_idx=layer_idx, **factory_kwargs)
-        # self.mamba = Zamba2MambaMixer(config=config, layer_idx=layer_idx)
         self.input_layernorm = Zamba2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.layer_idx = layer_idx
 
@@ -1087,7 +839,7 @@ ZAMBA2_START_DOCSTRING = r"""
     and behavior.
 
     Parameters:
-        config ([`ZambaConfig`]):
+        config ([`Zamba2Config`]):
             Model configuration class with all the parameters of the model. Initializing with a config file does not
             load the weights associated with the model, only the configuration. Check out the
             [`~PreTrainedModel.from_pretrained`] method to load the model weights.
@@ -1095,7 +847,7 @@ ZAMBA2_START_DOCSTRING = r"""
 
 
 @add_start_docstrings(
-    "The bare Zamba Model outputting raw hidden-states without any specific head on top.",
+    "The bare Zamba2 Model outputting raw hidden-states without any specific head on top.",
     ZAMBA2_START_DOCSTRING,
 )
 class Zamba2PreTrainedModel(PreTrainedModel):
@@ -1190,15 +942,15 @@ ZAMBA2_INPUTS_DOCSTRING = r"""
 
 
 @add_start_docstrings(
-    "The bare Zamba Model outputting raw hidden-states without any specific head on top.",
+    "The bare Zamba2 Model outputting raw hidden-states without any specific head on top.",
     ZAMBA2_START_DOCSTRING,
 )
 class Zamba2Model(Zamba2PreTrainedModel):
     """
-    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`ZambaDecoderLayer`]
+    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`Zamba2DecoderLayer`]
 
     Args:
-        config: ZambaConfig
+        config: Zamba2Config
     """
 
     def __init__(self, config: Zamba2Config):
@@ -1271,11 +1023,11 @@ class Zamba2Model(Zamba2PreTrainedModel):
 
         hidden_states = inputs_embeds
         
-        original_hidden_states = torch.clone(inputs_embeds)#.transpose(0, 1) ###
+        original_hidden_states = torch.clone(inputs_embeds)
         # original_hidden_states: word embedding output that will be concatenated with hidden activations to form the input of the shared transformer layer
         if use_cache and past_key_values is None:
             logger.warning_once(
-                "Zamba requires an initialized `HybridMambaAttentionDynamicCache` to return a cache. None was "
+                "Zamba2 requires an initialized `HybridMambaAttentionDynamicCache` to return a cache. None was "
                 "provided, so no cache will be returned."
             )
 
@@ -1292,7 +1044,6 @@ class Zamba2Model(Zamba2PreTrainedModel):
         mamba_layers = iter(self.mamba_layers)
         linear_layers = iter(self.linear_layers)
         block_count = 0
-        hidden_states = hidden_states#.transpose(0, 1) ###
         for layer_idx, layer_type in enumerate(self.layers_block_type):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -1487,10 +1238,10 @@ class Zamba2ForCausalLM(Zamba2PreTrainedModel):
         Example:
 
         ```python
-        >>> from transformers import AutoTokenizer, ZambaForCausalLM
+        >>> from transformers import AutoTokenizer, Zamba2ForCausalLM
 
-        >>> model = ZambaForCausalLM.from_pretrained("zyphra/Zamba-v0.1")
-        >>> tokenizer = AutoTokenizer.from_pretrained("zyphra/Zamba-v0.1")
+        >>> model = Zamba2ForCausalLM.from_pretrained("Zyphra/Zamba2-2.3B")
+        >>> tokenizer = AutoTokenizer.from_pretrained("Zyphra/Zamba2-2.3B")
 
         >>> prompt = "Hey, are you conscious? Can you talk to me?"
         >>> inputs = tokenizer(prompt, return_tensors="pt")
@@ -1606,9 +1357,9 @@ class Zamba2ForCausalLM(Zamba2PreTrainedModel):
 
 @add_start_docstrings(
     """
-    The Zamba Model with a sequence classification head on top (linear layer).
+    The Zamba2 Model with a sequence classification head on top (linear layer).
 
-    [`ZambaForSequenceClassification`] uses the last token in order to do the classification, as other causal models
+    [`Zamba2ForSequenceClassification`] uses the last token in order to do the classification, as other causal models
     (e.g. GPT-2) do.
 
     Since it does classification on the last token, it requires to know the position of the last token. If a
@@ -1619,7 +1370,7 @@ class Zamba2ForCausalLM(Zamba2PreTrainedModel):
     """,
     ZAMBA2_START_DOCSTRING,
 )
-# Copied from transformers.models.mixtral.modeling_mixtral.MixtralForSequenceClassification with Mixtral->Zamba, MIXTRAL->ZAMBA
+# Copied from transformers.models.mixtral.modeling_mixtral.MixtralForSequenceClassification with Mixtral->Zamba2, MIXTRAL->ZAMBA2
 class Zamba2ForSequenceClassification(Zamba2PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)

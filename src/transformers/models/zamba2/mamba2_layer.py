@@ -15,27 +15,12 @@ try:
     from causal_conv1d import causal_conv1d_fn, causal_conv1d_update
 except ImportError:
     causal_conv1d_fn = None
-    causal_conv1d_update = None
-    
-
-# from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, mamba_inner_fn, SELECTIVE_SCAN_CUDA_IMPORT_FAILED
-
-# if SELECTIVE_SCAN_CUDA_IMPORT_FAILED:
-#     from ops.selective_scan_interface import selective_scan_ref
-#     selective_scan_fn  = selective_scan_ref
-#     mamba_inner_fn = None
+    causal_conv1d_update = None   
 
 try:
     from mamba_ssm.ops.triton.selective_state_update import selective_state_update
 except ImportError:
     selective_state_update = None
-
-# try:
-#     from mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
-# except ImportError:
-#     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
-
-
 
 try:
     from mamba_ssm.ops.triton.selective_state_update import selective_state_update
@@ -100,10 +85,7 @@ class Mamba2Layer(nn.Module):
 
         # Order: [z, x, B, C, dt]
         d_in_proj = 2 * self.d_inner + 2 * self.ngroups * self.d_state + self.nheads
-        if self.config.use_low_rank_mamba_proj:
-            self.in_proj = nn.ModuleList([nn.Linear(self.d_model, self.config.mamba_lora_rank), nn.Linear(self.config.mamba_lora_rank, d_in_proj)])
-        else:
-            self.in_proj = nn.ModuleList([nn.Linear(self.d_model, d_in_proj, bias=self.config.add_bias_linear, **factory_kwargs)])
+        self.in_proj = nn.ModuleList([nn.Linear(self.d_model, d_in_proj, bias=self.config.add_bias_linear, **factory_kwargs)])
 
         conv_dim = self.d_ssm + 2 * self.ngroups * self.d_state
         self.conv1d = nn.Conv1d(
@@ -175,11 +157,7 @@ class Mamba2Layer(nn.Module):
                 out, _, _ = self.step(u, conv_state, ssm_state)
                 return out
 
-        if from_shared_proj is not None and self.config.use_low_rank_mamba_proj:
-            zxbcdt = self.in_proj[1](self.in_proj[0](u))  # (B, L, d_in_proj) or (B * L, d_in_proj)
-            zxbcdt += from_shared_proj
-        else:
-            zxbcdt = self.in_proj[0](u)  # (B, L, d_in_proj) or (B * L, d_in_proj)
+        zxbcdt = self.in_proj[0](u)  # (B, L, d_in_proj) or (B * L, d_in_proj)
         if seqlen_og is not None:
             zxbcdt = rearrange(zxbcdt, "(b l) d -> b l d", l=seqlen)        
         A = -torch.exp(self.A_log)  # (nheads) or (d_inner, d_state)
