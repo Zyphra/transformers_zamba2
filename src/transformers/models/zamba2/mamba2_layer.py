@@ -133,7 +133,7 @@ class Mamba2Layer(nn.Module):
         self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=self.config.add_bias_linear, **factory_kwargs)
 
 
-    def forward(self, u, from_shared_proj=None, seqlen=None, seq_idx=None, inference_params=None):
+    def forward(self, u, from_shared_proj=None, seqlen=None, seq_idx=None, inference_params=None, attention_mask=None):
         """
         u: (batch, seqlen, hidden_dim) if seqlen=None.
             If seqlen is not None, u is (batch * seqlen, hidden_dim). This is so that when we
@@ -163,6 +163,10 @@ class Mamba2Layer(nn.Module):
         A = -torch.exp(self.A_log)  # (nheads) or (d_inner, d_state)
         dt_limit_kwargs = {} if self.dt_limit == (0.0, float("inf")) else dict(dt_limit=self.dt_limit)
         if self.use_mem_eff_path and inference_params is None:
+            if attention_mask is not None:
+                assert torch.all(attention_mask==1), ("Detected padding in mamba's attention_mask. This is only allowed when inference_params is not None. " 
+                "If you want to apply masking without using mamba's cache, please consider masking the loss."
+                )
             out = mamba_split_conv1d_scan_combined(
                 zxbcdt,
                 rearrange(self.conv1d.weight, "d 1 w -> d w"),
@@ -191,6 +195,8 @@ class Mamba2Layer(nn.Module):
                 [d_mlp, d_mlp, self.d_ssm, self.d_ssm + 2 * self.ngroups * self.d_state, self.nheads],
                 dim=-1
             )
+            if not torch.all(attention_mask==1):
+                xBC = xBC * attention_mask.unsqueeze(-1)
             if conv_state is not None:
                 # If we just take xBC[:, :, -self.d_conv :], it will error if seqlen < self.d_conv
                 # Instead F.pad will pad with zeros if seqlen < self.d_conv, and truncate otherwise.
@@ -208,6 +214,8 @@ class Mamba2Layer(nn.Module):
                     bias=self.conv1d.bias,
                     activation=self.activation,
                 ).transpose(1, 2)
+            if not torch.all(attention_mask==1):
+                xBC = xBC * attention_mask.unsqueeze(-1)
             x, B, C = torch.split(xBC, [self.d_ssm, self.ngroups * self.d_state, self.ngroups * self.d_state], dim=-1)
             y = mamba_chunk_scan_combined(
                 rearrange(x, "b l (h p) -> b l h p", p=self.headdim),
@@ -248,7 +256,7 @@ class Mamba2Layer(nn.Module):
             [d_mlp, d_mlp, self.d_ssm, self.d_ssm + 2 * self.ngroups * self.d_state, self.nheads],
             dim=-1
         )
-
+        
         # Conv step
         if causal_conv1d_update is None:
             conv_state.copy_(torch.roll(conv_state, shifts=-1, dims=-1))  # Update state (B D W)

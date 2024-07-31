@@ -300,7 +300,6 @@ class Zamba2Attention(nn.Module):
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(bsz, q_len, 2 * self.hidden_size)
 
-        attn_output = attn_output
         attn_output = self.o_proj(attn_output)
         attn_output = attn_output
 
@@ -811,6 +810,7 @@ class Zamba2MambaDecoderLayer(nn.Module):
         hidden_states = self.mamba(
             u=hidden_states,
             inference_params=past_key_value,
+            attention_mask=attention_mask,
         )
 
         self_attn_weights = None
@@ -1035,9 +1035,7 @@ class Zamba2Model(Zamba2PreTrainedModel):
             cache_position = torch.arange(hidden_states.shape[1], device=hidden_states.device)
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
-
         causal_mask = self._update_causal_mask(attention_mask, inputs_embeds, cache_position)
-
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
 
@@ -1076,7 +1074,7 @@ class Zamba2Model(Zamba2PreTrainedModel):
                         cache_position=cache_position,
                     )
                 block_count += 1
-                transformer_hidden_states = layer_outputs[0]         
+                transformer_hidden_states = layer_outputs[0]
                 if output_attentions:
                     if layer_outputs[1] is not None:
                         all_self_attns += (layer_outputs[1],)
@@ -1096,7 +1094,7 @@ class Zamba2Model(Zamba2PreTrainedModel):
                     next(mamba_layers).__call__,
                     hidden_states,
                     transformer_hidden_states,
-                    causal_mask,
+                    attention_mask,
                     position_ids,
                     past_key_values,
                     output_attentions,
@@ -1107,7 +1105,7 @@ class Zamba2Model(Zamba2PreTrainedModel):
                 layer_outputs = next(mamba_layers)(
                     hidden_states,
                     transformer_hidden_states=transformer_hidden_states,
-                    attention_mask=causal_mask,
+                    attention_mask=attention_mask,
                     position_ids=position_ids,
                     past_key_value=past_key_values,
                     output_attentions=output_attentions,
