@@ -133,7 +133,15 @@ class Mamba2Layer(nn.Module):
         self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=self.config.add_bias_linear, **factory_kwargs)
 
 
-    def forward(self, u, from_shared_proj=None, seqlen=None, seq_idx=None, inference_params=None, attention_mask=None):
+    def forward(self, 
+                u, 
+                from_shared_proj=None, 
+                seqlen=None, 
+                seq_idx=None, 
+                inference_params=None, 
+                attention_mask=None,
+                **kwargs,
+                ):
         """
         u: (batch, seqlen, hidden_dim) if seqlen=None.
             If seqlen is not None, u is (batch * seqlen, hidden_dim). This is so that when we
@@ -162,11 +170,10 @@ class Mamba2Layer(nn.Module):
             zxbcdt = rearrange(zxbcdt, "(b l) d -> b l d", l=seqlen)        
         A = -torch.exp(self.A_log)  # (nheads) or (d_inner, d_state)
         dt_limit_kwargs = {} if self.dt_limit == (0.0, float("inf")) else dict(dt_limit=self.dt_limit)
-        if self.use_mem_eff_path and inference_params is None:
-            if attention_mask is not None:
-                assert torch.all(attention_mask==1), ("Detected padding in mamba's attention_mask. This is only allowed when inference_params is not None. " 
-                "If you want to apply masking without using mamba's cache, please consider masking the loss."
-                )
+        input_not_masked = True
+        if attention_mask is not None:
+            input_not_masked = torch.all(attention_mask==1)
+        if self.use_mem_eff_path and inference_params is None and input_not_masked:
             out = mamba_split_conv1d_scan_combined(
                 zxbcdt,
                 rearrange(self.conv1d.weight, "d 1 w -> d w"),
