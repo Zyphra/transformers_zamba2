@@ -109,6 +109,7 @@ class Zamba2Config(PretrainedConfig):
     def __init__(
         self,
         vocab_size=32000,
+        max_position_embeddings=4096,
         tie_word_embeddings=True,
         hidden_size=2560,
         num_hidden_layers=54,
@@ -121,18 +122,18 @@ class Zamba2Config(PretrainedConfig):
         add_bias_linear=False,       
         ffn_hidden_size=None,
         gated_linear_unit=True,
-
-        
-        
         num_attention_heads=32,
         num_key_value_heads=None,
         sliding_window=None,
         attention_dropout=0.0,
         
-        
+        num_mem_blocks=1,
         use_shared_block_lora=True,
+        use_shared_attention_lora=False,
         lora_rank=128,
         use_mamba_kernels=True,
+        use_mem_rope=False,
+        rope_theta=10000,
         
         initializer_range=0.02,
         rms_norm_eps=1e-5,
@@ -147,12 +148,16 @@ class Zamba2Config(PretrainedConfig):
     ):
 
         self.vocab_size = vocab_size
+        self.max_position_embeddings = max_position_embeddings
         self.tie_word_embeddings = tie_word_embeddings
         self.hidden_size = hidden_size
         self.ffn_hidden_size = ffn_hidden_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
         self.sliding_window = sliding_window
+        self.num_mem_blocks = num_mem_blocks
+        self.use_mem_rope = use_mem_rope
+        self.rope_theta = rope_theta
         self.attention_dropout = attention_dropout
         self.state_size = state_size
         self.conv_dimension = conv_dimension
@@ -161,6 +166,7 @@ class Zamba2Config(PretrainedConfig):
         self.mamba_headdim = mamba_headdim
         self.gated_linear_unit = gated_linear_unit
         self.use_shared_block_lora = use_shared_block_lora
+        self.use_shared_attention_lora = use_shared_attention_lora
         self.lora_rank = lora_rank
         
         # for backward compatibility
@@ -184,7 +190,6 @@ class Zamba2Config(PretrainedConfig):
 
         # Below, "m" means mamba layer, "g" means shared transformer layer followed by a mamba layer
         self.layers_block_type = ['m', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'g', 'm', 'm']
-        
         self.ft_lora = ft_lora
 
         super().__init__(

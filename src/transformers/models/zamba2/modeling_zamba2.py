@@ -113,6 +113,70 @@ class Zamba2RMSNorm(nn.Module):
         return self.weight * hidden_states.to(input_dtype)
 
 
+class Zamba2RotaryEmbedding(nn.Module):
+    def __init__(self, dim, max_position_embeddings=4096, base=10000, device=None):
+        super().__init__()
+
+        self.dim = dim
+        self.max_position_embeddings = max_position_embeddings
+        self.base = base
+        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.int64).float().to(device) / self.dim))
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+
+    @torch.no_grad()
+    # Copied from transformers.models.llama.modeling_llama.LlamaRotaryEmbedding.forward
+    def forward(self, x, position_ids):
+        # x: [bs, num_attention_heads, seq_len, head_size]
+        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
+        position_ids_expanded = position_ids[:, None, :].float()
+        # Force float32 since bfloat16 loses precision on long contexts
+        # See https://github.com/huggingface/transformers/pull/29285
+        device_type = x.device.type
+        device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
+        with torch.autocast(device_type=device_type, enabled=False):
+            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
+            emb = torch.cat((freqs, freqs), dim=-1)
+            cos = emb.cos()
+            sin = emb.sin()
+        return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
+
+
+# Copied from transformers.models.llama.modeling_llama.rotate_half
+def rotate_half(x):
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+# Copied from transformers.models.llama.modeling_llama.apply_rotary_pos_emb
+def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
+    """Applies Rotary Position Embedding to the query and key tensors.
+
+    Args:
+        q (`torch.Tensor`): The query tensor.
+        k (`torch.Tensor`): The key tensor.
+        cos (`torch.Tensor`): The cosine part of the rotary embedding.
+        sin (`torch.Tensor`): The sine part of the rotary embedding.
+        position_ids (`torch.Tensor`, *optional*):
+            Deprecated and unused.
+        unsqueeze_dim (`int`, *optional*, defaults to 1):
+            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
+            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
+            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
+            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
+            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
+            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
+    Returns:
+        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
+    """
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
+
+
 # Copied from transformers.models.llama.modeling_llama.repeat_kv
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     """
@@ -230,10 +294,12 @@ class Zamba2Attention(nn.Module):
     and "Generating Long Sequences with Sparse Transformers".
     """
 
-    def __init__(self, config: Zamba2Config, layer_idx: Optional[int] = None):
+    def __init__(self, config: Zamba2Config, layer_idx: Optional[int] = None, num_mem_blocks = None):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
+        self.num_mem_blocks = num_mem_blocks
+        self.rope_theta = config.rope_theta
 
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
@@ -255,6 +321,36 @@ class Zamba2Attention(nn.Module):
         self.v_proj = nn.Linear(2 * self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
 
+        if config.use_shared_attention_lora:
+            self.linear_q_lora_A_list = nn.ParameterList([])
+            self.linear_q_lora_B_list = nn.ParameterList([])
+            self.linear_k_lora_A_list = nn.ParameterList([])
+            self.linear_k_lora_B_list = nn.ParameterList([])
+            self.linear_v_lora_A_list = nn.ParameterList([])
+            self.linear_v_lora_B_list = nn.ParameterList([])
+            
+            for i in range(self.num_mem_blocks):
+                # we store all loras in a list
+                linear_q_lora_A = nn.Linear(2 * self.config.hidden_size, self.config.lora_rank, bias = False)
+                linear_q_lora_B = nn.Linear(self.config.lora_rank, 2 * self.config.hidden_size, bias = False)
+                self.linear_q_lora_A_list.append(linear_q_lora_A)
+                self.linear_q_lora_B_list.append(linear_q_lora_B)
+                linear_k_lora_A = nn.Linear(2 * self.config.hidden_size, self.config.lora_rank, bias = False)
+                linear_k_lora_B = nn.Linear(self.config.lora_rank, 2 * self.config.hidden_size, bias = False)
+                self.linear_k_lora_A_list.append(linear_k_lora_A)
+                self.linear_k_lora_B_list.append(linear_k_lora_B)
+                linear_v_lora_A = nn.Linear(2 * self.config.hidden_size, self.config.lora_rank, bias = False)
+                linear_v_lora_B = nn.Linear(self.config.lora_rank, 2 * self.config.hidden_size, bias = False)
+                self.linear_v_lora_A_list.append(linear_v_lora_A)
+                self.linear_v_lora_B_list.append(linear_v_lora_B)
+
+        if config.use_mem_rope:
+            self.rotary_emb = Zamba2RotaryEmbedding(
+                self.head_dim,
+                max_position_embeddings=config.max_position_embeddings,
+                base=self.rope_theta,
+            )
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -268,17 +364,41 @@ class Zamba2Attention(nn.Module):
         **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
-        layer_idx = self.layer_block_map[layer_idx]
 
-        query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = self.v_proj(hidden_states)
+        if self.config.use_shared_attention_lora:
+            linear_q_lora_A = self.linear_q_lora_A_list[layer_idx]
+            linear_q_lora_B = self.linear_q_lora_B_list[layer_idx]
+            q_lora_output = linear_q_lora_A(hidden_states)
+            q_lora_output = linear_q_lora_B(q_lora_output)
+            query_states = self.q_proj(hidden_states)
+            query_states = query_states + q_lora_output
+            linear_k_lora_A = self.linear_k_lora_A_list[layer_idx]
+            linear_k_lora_B = self.linear_k_lora_B_list[layer_idx]
+            k_lora_output = linear_k_lora_A(hidden_states)
+            k_lora_output = linear_k_lora_B(k_lora_output)
+            key_states = self.k_proj(hidden_states)
+            key_states = key_states + k_lora_output
+            linear_v_lora_A = self.linear_v_lora_A_list[layer_idx]
+            linear_v_lora_B = self.linear_v_lora_B_list[layer_idx]
+            v_lora_output = linear_v_lora_A(hidden_states)
+            v_lora_output = linear_v_lora_B(v_lora_output)
+            value_states = self.v_proj(hidden_states)
+            value_states = value_states + v_lora_output
+        else:
+            query_states = self.q_proj(hidden_states)
+            key_states = self.k_proj(hidden_states)
+            value_states = self.v_proj(hidden_states)
 
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
+        if self.config.use_mem_rope:
+            cos, sin = self.rotary_emb(value_states, position_ids)
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
         if past_key_value is not None:
+            layer_idx = self.layer_block_map[layer_idx]
             key_states, value_states = past_key_value.update(key_states, value_states, layer_idx)
         
         # repeat k/v heads if n_kv_heads < n_heads
@@ -346,11 +466,30 @@ class Zamba2FlashAttention2(Zamba2Attention):
         **kwargs,
     ):
         bsz, q_len, _ = hidden_states.size()
-        layer_idx = self.layer_block_map[layer_idx]
 
-        query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = self.v_proj(hidden_states)
+        if self.config.use_shared_attention_lora:
+            linear_q_lora_A = self.linear_q_lora_A_list[layer_idx]
+            linear_q_lora_B = self.linear_q_lora_B_list[layer_idx]
+            q_lora_output = linear_q_lora_A(hidden_states)
+            q_lora_output = linear_q_lora_B(q_lora_output)
+            query_states = self.q_proj(hidden_states)
+            query_states = query_states + q_lora_output
+            linear_k_lora_A = self.linear_k_lora_A_list[layer_idx]
+            linear_k_lora_B = self.linear_k_lora_B_list[layer_idx]
+            k_lora_output = linear_k_lora_A(hidden_states)
+            k_lora_output = linear_k_lora_B(q_lora_output)
+            key_states = self.k_proj(hidden_states)
+            key_states = key_states + k_lora_output
+            linear_v_lora_A = self.linear_v_lora_A_list[layer_idx]
+            linear_v_lora_B = self.linear_v_lora_B_list[layer_idx]
+            v_lora_output = linear_v_lora_A(hidden_states)
+            v_lora_output = linear_v_lora_B(q_lora_output)
+            value_states = self.v_proj(hidden_states)
+            value_states = value_states + v_lora_output
+        else:
+            query_states = self.q_proj(hidden_states)
+            key_states = self.k_proj(hidden_states)
+            value_states = self.v_proj(hidden_states)
 
         # Flash attention requires the input to have the shape
         # batch_size x seq_length x head_dim x hidden_dim
@@ -359,7 +498,12 @@ class Zamba2FlashAttention2(Zamba2Attention):
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
+        if self.config.use_mem_rope:
+            cos, sin = self.rotary_emb(value_states, position_ids)
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        
         if past_key_value is not None:
+            layer_idx = self.layer_block_map[layer_idx]
             key_states, value_states = past_key_value.update(key_states, value_states, layer_idx)
 
         # repeat k/v heads if n_kv_heads < n_heads
@@ -594,17 +738,41 @@ class Zamba2SdpaAttention(Zamba2Attention):
             )
 
         bsz, q_len, _ = hidden_states.size()
-        layer_idx = self.layer_block_map[layer_idx]
 
-        query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = self.v_proj(hidden_states)
+        if self.config.use_shared_attention_lora:
+            linear_q_lora_A = self.linear_q_lora_A_list[layer_idx]
+            linear_q_lora_B = self.linear_q_lora_B_list[layer_idx]
+            q_lora_output = linear_q_lora_A(hidden_states)
+            q_lora_output = linear_q_lora_B(q_lora_output)
+            query_states = self.q_proj(hidden_states)
+            query_states = query_states + q_lora_output
+            linear_k_lora_A = self.linear_k_lora_A_list[layer_idx]
+            linear_k_lora_B = self.linear_k_lora_B_list[layer_idx]
+            k_lora_output = linear_k_lora_A(hidden_states)
+            k_lora_output = linear_k_lora_B(q_lora_output)
+            key_states = self.k_proj(hidden_states)
+            key_states = key_states + k_lora_output
+            linear_v_lora_A = self.linear_v_lora_A_list[layer_idx]
+            linear_v_lora_B = self.linear_v_lora_B_list[layer_idx]
+            v_lora_output = linear_v_lora_A(hidden_states)
+            v_lora_output = linear_v_lora_B(q_lora_output)
+            value_states = self.v_proj(hidden_states)
+            value_states = value_states + v_lora_output
+        else:
+            query_states = self.q_proj(hidden_states)
+            key_states = self.k_proj(hidden_states)
+            value_states = self.v_proj(hidden_states)
 
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
 
+        if self.config.use_mem_rope:
+            cos, sin = self.rotary_emb(value_states, position_ids)
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
         if past_key_value is not None:
+            layer_idx = self.layer_block_map[layer_idx]
             key_states, value_states = past_key_value.update(key_states, value_states, layer_idx)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
@@ -714,7 +882,7 @@ class Zamba2AttentionDecoderLayer(nn.Module):
     def __init__(self, config: Zamba2Config, layer_idx: Optional[int] = None):
         super().__init__()
         num_gs = count_mem_blocks_in_config(config)
-        self.self_attn = ZAMBA2_ATTENTION_CLASSES[config._attn_implementation](config, layer_idx=-1)
+        self.self_attn = ZAMBA2_ATTENTION_CLASSES[config._attn_implementation](config, layer_idx=-1, num_mem_blocks = num_gs)
         self.feed_forward = Zamba2MLP(config, layer_idx=-1, num_mem_blocks = num_gs)
         self.input_layernorm = Zamba2RMSNorm(2 * config.hidden_size, eps=config.rms_norm_eps)
         self.pre_ff_layernorm = Zamba2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -754,7 +922,7 @@ class Zamba2AttentionDecoderLayer(nn.Module):
         hidden_states = torch.concatenate([hidden_states, original_hidden_states], dim=-1)
         
         hidden_states = self.input_layernorm(hidden_states)
-        hidden_states, self_attn_weights, present_key_value = self.self_attn(hidden_states, attention_mask=attention_mask, past_key_value=past_key_value, layer_idx = layer_idx)
+        hidden_states, self_attn_weights, present_key_value = self.self_attn(hidden_states, attention_mask=attention_mask, past_key_value=past_key_value, position_ids=position_ids, layer_idx=layer_idx)
 
         # feed-forward (MLP)
         hidden_states = self.pre_ff_layernorm(hidden_states)
@@ -965,7 +1133,7 @@ class Zamba2Model(Zamba2PreTrainedModel):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.blocks = torch.nn.ModuleList([Zamba2AttentionDecoderLayer(config),Zamba2AttentionDecoderLayer(config)])
+        self.blocks = torch.nn.ModuleList([Zamba2AttentionDecoderLayer(config) for _ in range(config.num_mem_blocks)])
         mamba_layers = []
         linear_layers = []
         self.layers_block_type = config.layers_block_type
@@ -1055,7 +1223,7 @@ class Zamba2Model(Zamba2PreTrainedModel):
             if layer_type == "g":
                 if self.gradient_checkpointing and self.training:
                     layer_outputs = self._gradient_checkpointing_func(
-                        self.blocks[block_count % 2].__call__,
+                        self.blocks[block_count % self.config.num_mem_blocks].__call__,
                         hidden_states,
                         original_hidden_states,
                         block_count,
@@ -1068,7 +1236,7 @@ class Zamba2Model(Zamba2PreTrainedModel):
                         block_count,
                     )
                 else:
-                    layer_outputs = self.blocks[block_count % 2](
+                    layer_outputs = self.blocks[block_count % self.config.num_mem_blocks](
                         hidden_states,
                         original_hidden_states=original_hidden_states,
                         layer_idx=block_count,
