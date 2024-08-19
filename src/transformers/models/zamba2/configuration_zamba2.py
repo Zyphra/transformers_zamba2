@@ -141,6 +141,8 @@ class Zamba2Config(PretrainedConfig):
         pad_token_id=0,
         bos_token_id=1,
         eos_token_id=2,
+
+        ft_lora = False,
         **kwargs,
     ):
 
@@ -182,6 +184,8 @@ class Zamba2Config(PretrainedConfig):
 
         # Below, "m" means mamba layer, "g" means shared transformer layer followed by a mamba layer
         self.layers_block_type = ['m', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'm', 'g', 'm', 'm', 'm', 'g', 'm', 'm']
+        
+        self.ft_lora = ft_lora
 
         super().__init__(
             pad_token_id=pad_token_id,

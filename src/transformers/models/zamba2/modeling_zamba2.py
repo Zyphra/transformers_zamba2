@@ -188,10 +188,15 @@ class HybridMambaAttentionDynamicCache:
             device = self.value_cache[layer_idx].device
             self.value_cache[layer_idx] = self.value_cache[layer_idx].index_select(0, beam_idx.to(device))
 
-            device = self.conv_states[layer_idx].device
-            self.conv_states[layer_idx] = self.conv_states[layer_idx].index_select(0, beam_idx.to(device))
-            device = self.ssm_states[layer_idx].device
-            self.ssm_states[layer_idx] = self.ssm_states[layer_idx].index_select(0, beam_idx.to(device))
+            conv_state, ssm_state = self.key_value_memory_dict_mamba[layer_idx]
+            device = conv_state.device
+            conv_state = conv_state.index_select(0, beam_idx.to(device))
+            ssm_state = ssm_state.index_select(0, beam_idx.to(device))
+            self.key_value_memory_dict_mamba[layer_idx] = (conv_state, ssm_state)
+
+            # self.conv_states[layer_idx] = self.conv_states[layer_idx].index_select(0, beam_idx.to(device))
+            # device = self.ssm_states[layer_idx].device
+            # self.ssm_states[layer_idx] = self.ssm_states[layer_idx].index_select(0, beam_idx.to(device))
 
     # Copied from transformers.models.jamba.modeling_jamba.HybridMambaAttentionDynamicCache.get_seq_length
     def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:

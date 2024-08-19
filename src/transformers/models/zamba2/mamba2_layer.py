@@ -132,6 +132,17 @@ class Mamba2Layer(nn.Module):
 
         self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=self.config.add_bias_linear, **factory_kwargs)
 
+        if self.config.ft_lora:
+            self.x_lora_A = nn.Linear(self.d_inner, self.config.lora_rank, bias = False)
+            self.x_lora_B = nn.Linear(self.config.lora_rank, self.d_inner, bias = False)
+            nn.init.zeros_(self.x_lora_B.weight)
+            self.z_lora_A = nn.Linear(self.d_inner, self.config.lora_rank, bias = False)
+            self.z_lora_B = nn.Linear(self.config.lora_rank, self.d_inner, bias = False)
+            nn.init.zeros_(self.z_lora_B.weight)
+            self.out_proj_lora_A = nn.Linear(self.d_inner, self.config.lora_rank, bias = False)
+            self.out_proj_lora_B = nn.Linear(self.config.lora_rank, self.d_model, bias = False)
+            nn.init.zeros_(self.out_proj_lora_B.weight)
+
 
     def forward(self, 
                 u, 
@@ -173,7 +184,7 @@ class Mamba2Layer(nn.Module):
         input_not_masked = True
         if attention_mask is not None:
             input_not_masked = torch.all(attention_mask==1)
-        if self.use_mem_eff_path and inference_params is None and input_not_masked:
+        if self.use_mem_eff_path and inference_params is None and input_not_masked and not self.config.ft_lora:
             out = mamba_split_conv1d_scan_combined(
                 zxbcdt,
                 rearrange(self.conv1d.weight, "d 1 w -> d w"),
@@ -202,6 +213,7 @@ class Mamba2Layer(nn.Module):
                 [d_mlp, d_mlp, self.d_ssm, self.d_ssm + 2 * self.ngroups * self.d_state, self.nheads],
                 dim=-1
             )
+
             if not torch.all(attention_mask==1):
                 xBC = xBC * attention_mask.unsqueeze(-1)
             if conv_state is not None:
@@ -224,6 +236,13 @@ class Mamba2Layer(nn.Module):
             if not torch.all(attention_mask==1):
                 xBC = xBC * attention_mask.unsqueeze(-1)
             x, B, C = torch.split(xBC, [self.d_ssm, self.ngroups * self.d_state, self.ngroups * self.d_state], dim=-1)
+            if self.config.ft_lora:
+                lora_output_x = self.x_lora_A(x)
+                lora_output_x = self.x_lora_B(lora_output_x)
+                lora_output_z = self.z_lora_A(z)
+                lora_output_z = self.z_lora_B(lora_output_z)
+                x = x + lora_output_x
+                z = z + lora_output_z
             y = mamba_chunk_scan_combined(
                 rearrange(x, "b l (h p) -> b l h p", p=self.headdim),
                 dt,
@@ -250,6 +269,10 @@ class Mamba2Layer(nn.Module):
             if seqlen_og is not None:
                 y = rearrange(y, "b l d -> (b l) d")
             out = self.out_proj(y)
+            if self.config.ft_lora:
+                lora_output_out = self.out_proj_lora_A(y)
+                lora_output_out = self.out_proj_lora_B(lora_output_out)
+                out = out + lora_output_out
         
         return out
 
@@ -282,6 +305,14 @@ class Mamba2Layer(nn.Module):
             )
 
         x, B, C = torch.split(xBC, [self.d_ssm, self.ngroups * self.d_state, self.ngroups * self.d_state], dim=-1)
+
+        if self.config.ft_lora:
+            lora_output_x = self.x_lora_A(x)
+            lora_output_x = self.x_lora_B(lora_output_x)
+            lora_output_z = self.z_lora_A(z)
+            lora_output_z = self.z_lora_B(lora_output_z)
+            x = x + lora_output_x
+            z = z + lora_output_z
         A = -torch.exp(self.A_log.float())  # (nheads,)
 
         # SSM step
@@ -318,6 +349,10 @@ class Mamba2Layer(nn.Module):
         if d_mlp > 0:
             y = torch.cat([F.silu(z0) * x0, y], dim=-1)
         out = self.out_proj(y)
+        if self.config.ft_lora:
+            lora_output_out = self.out_proj_lora_A(y)
+            lora_output_out = self.out_proj_lora_B(lora_output_out)
+            out = out + lora_output_out
         return out.unsqueeze(1), conv_state, ssm_state
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
