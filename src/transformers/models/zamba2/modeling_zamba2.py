@@ -477,13 +477,13 @@ class Zamba2FlashAttention2(Zamba2Attention):
             linear_k_lora_A = self.linear_k_lora_A_list[layer_idx]
             linear_k_lora_B = self.linear_k_lora_B_list[layer_idx]
             k_lora_output = linear_k_lora_A(hidden_states)
-            k_lora_output = linear_k_lora_B(q_lora_output)
+            k_lora_output = linear_k_lora_B(k_lora_output)
             key_states = self.k_proj(hidden_states)
             key_states = key_states + k_lora_output
             linear_v_lora_A = self.linear_v_lora_A_list[layer_idx]
             linear_v_lora_B = self.linear_v_lora_B_list[layer_idx]
             v_lora_output = linear_v_lora_A(hidden_states)
-            v_lora_output = linear_v_lora_B(q_lora_output)
+            v_lora_output = linear_v_lora_B(v_lora_output)
             value_states = self.v_proj(hidden_states)
             value_states = value_states + v_lora_output
         else:
@@ -749,13 +749,13 @@ class Zamba2SdpaAttention(Zamba2Attention):
             linear_k_lora_A = self.linear_k_lora_A_list[layer_idx]
             linear_k_lora_B = self.linear_k_lora_B_list[layer_idx]
             k_lora_output = linear_k_lora_A(hidden_states)
-            k_lora_output = linear_k_lora_B(q_lora_output)
+            k_lora_output = linear_k_lora_B(k_lora_output)
             key_states = self.k_proj(hidden_states)
             key_states = key_states + k_lora_output
             linear_v_lora_A = self.linear_v_lora_A_list[layer_idx]
             linear_v_lora_B = self.linear_v_lora_B_list[layer_idx]
             v_lora_output = linear_v_lora_A(hidden_states)
-            v_lora_output = linear_v_lora_B(q_lora_output)
+            v_lora_output = linear_v_lora_B(v_lora_output)
             value_states = self.v_proj(hidden_states)
             value_states = value_states + v_lora_output
         else:
