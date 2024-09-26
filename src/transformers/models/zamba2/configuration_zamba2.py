@@ -118,6 +118,7 @@ class Zamba2Config(PretrainedConfig):
         conv_dimension=4,
         expansion_factor=2,
         mamba_headdim=64,
+        mamba_ngroups=1,
 
         add_bias_linear=False,       
         ffn_hidden_size=None,
@@ -164,6 +165,7 @@ class Zamba2Config(PretrainedConfig):
         self.expansion_factor = expansion_factor
         self.add_bias_linear = add_bias_linear
         self.mamba_headdim = mamba_headdim
+        self.mamba_ngroups = mamba_ngroups
         self.gated_linear_unit = gated_linear_unit
         self.use_shared_block_lora = use_shared_block_lora
         self.use_shared_attention_lora = use_shared_attention_lora
