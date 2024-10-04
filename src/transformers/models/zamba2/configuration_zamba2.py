@@ -132,7 +132,7 @@ class Zamba2Config(PretrainedConfig):
         use_shared_block_lora=True,
         use_shared_attention_lora=False,
         lora_rank=128,
-        use_mamba_kernels=True,
+        use_mem_eff_path=True,
         use_mem_rope=False,
         rope_theta=10000,
         
@@ -187,7 +187,7 @@ class Zamba2Config(PretrainedConfig):
 
         self.use_cache = use_cache
         self.num_logits_to_keep = num_logits_to_keep
-        self.use_mamba_kernels = use_mamba_kernels
+        self.use_mem_eff_path = use_mem_eff_path
 
 
         # Below, "m" means mamba layer, "g" means shared transformer layer followed by a mamba layer
