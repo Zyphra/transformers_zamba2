@@ -212,8 +212,7 @@ class Mamba2Layer(nn.Module):
                 [d_mlp, d_mlp, self.d_ssm, self.d_ssm + 2 * self.ngroups * self.d_state, self.nheads],
                 dim=-1
             )
-
-            if not torch.all(attention_mask==1):
+            if attention_mask is not None and not torch.all(attention_mask==1):
                 xBC = xBC * attention_mask.unsqueeze(-1)
             if conv_state is not None:
                 # If we just take xBC[:, :, -self.d_conv :], it will error if seqlen < self.d_conv
@@ -232,7 +231,7 @@ class Mamba2Layer(nn.Module):
                     bias=self.conv1d.bias,
                     activation=self.activation,
                 ).transpose(1, 2)
-            if not torch.all(attention_mask==1):
+            if attention_mask is not None and not torch.all(attention_mask==1):
                 xBC = xBC * attention_mask.unsqueeze(-1)
             x, B, C = torch.split(xBC, [self.d_ssm, self.ngroups * self.d_state, self.ngroups * self.d_state], dim=-1)
             if self.config.ft_lora:
