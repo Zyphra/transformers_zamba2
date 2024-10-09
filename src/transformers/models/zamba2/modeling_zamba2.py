@@ -350,6 +350,18 @@ class Zamba2Attention(nn.Module):
                 max_position_embeddings=config.max_position_embeddings,
                 base=self.rope_theta,
             )
+            if config.use_long:
+                old_init = self.rotary_emb.__init__
+                def ntk_scaled_init(self, dim, max_position_embeddings=4096, base=10000, device=None):
+                    #The method is just these three lines
+                    max_position_embeddings = 16384
+                    a = 16 #Alpha value
+                    base = base * a ** (dim / (dim-2)) #Base change formula
+                    print("NTK scaling with factor: base * a ** (dim / (dim-2))" )  
+                    old_init(self, dim, max_position_embeddings, base, device)
+                self.rotary_emb.__init__ = ntk_scaled_init
+
+
 
     def forward(
         self,

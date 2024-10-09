@@ -145,6 +145,7 @@ class Zamba2Config(PretrainedConfig):
         eos_token_id=2,
 
         ft_lora = False,
+        use_long=False,
         **kwargs,
     ):
 
@@ -170,6 +171,7 @@ class Zamba2Config(PretrainedConfig):
         self.use_shared_block_lora = use_shared_block_lora
         self.use_shared_attention_lora = use_shared_attention_lora
         self.lora_rank = lora_rank
+        self.use_long=use_long
         
         # for backward compatibility
         if num_key_value_heads is None:
