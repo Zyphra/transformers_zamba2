@@ -1137,6 +1137,11 @@ class Zamba2Model(Zamba2PreTrainedModel):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
+        
+        if config.use_long_context:
+            logger.warning_once(
+                    f"`use_long_context` has been set to True, therefore `max_position_embeddings` will be set to 16384."
+                )
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.blocks = torch.nn.ModuleList([Zamba2AttentionDecoderLayer(config) for _ in range(config.num_mem_blocks)])

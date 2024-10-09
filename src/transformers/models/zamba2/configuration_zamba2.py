@@ -174,9 +174,6 @@ class Zamba2Config(PretrainedConfig):
         self.use_long_context=use_long_context
         if use_long_context:
             self.max_position_embeddings = 16384
-            logger.warning_once(
-                f"`use_long_context` has been set to True, therefore `max_position_embeddings` will be set to 16384."
-            )
         
         # for backward compatibility
         if num_key_value_heads is None:
