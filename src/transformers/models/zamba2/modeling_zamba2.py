@@ -114,14 +114,17 @@ class Zamba2RMSNorm(nn.Module):
 
 
 class Zamba2RotaryEmbedding(nn.Module):
-    def __init__(self, dim, max_position_embeddings=4096, base=10000, device=None):
+    def __init__(self, config, dim, max_position_embeddings=4096, base=10000, device=None):
         super().__init__()
-
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
+        if config.use_long_context:
+            a = 16 #Alpha value
+            base = base * a ** (dim / (dim-2)) #Base change formula
         self.base = base
         inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.int64).float().to(device) / self.dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)
+        
 
     @torch.no_grad()
     # Copied from transformers.models.llama.modeling_llama.LlamaRotaryEmbedding.forward
@@ -346,20 +349,11 @@ class Zamba2Attention(nn.Module):
 
         if config.use_mem_rope:
             self.rotary_emb = Zamba2RotaryEmbedding(
+                config,
                 self.head_dim,
                 max_position_embeddings=config.max_position_embeddings,
                 base=self.rope_theta,
             )
-            if config.use_long:
-                old_init = self.rotary_emb.__init__
-                def ntk_scaled_init(self, dim, max_position_embeddings=4096, base=10000, device=None):
-                    #The method is just these three lines
-                    max_position_embeddings = 16384
-                    a = 16 #Alpha value
-                    base = base * a ** (dim / (dim-2)) #Base change formula
-                    print("NTK scaling with factor: base * a ** (dim / (dim-2))" )  
-                    old_init(self, dim, max_position_embeddings, base, device)
-                self.rotary_emb.__init__ = ntk_scaled_init
 
 
 
