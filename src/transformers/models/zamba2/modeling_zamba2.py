@@ -114,14 +114,17 @@ class Zamba2RMSNorm(nn.Module):
 
 
 class Zamba2RotaryEmbedding(nn.Module):
-    def __init__(self, dim, max_position_embeddings=4096, base=10000, device=None):
+    def __init__(self, config, dim, max_position_embeddings=4096, base=10000, device=None):
         super().__init__()
-
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
+        if config.use_long_context:
+            a = 16 #Alpha value
+            base = base * a ** (dim / (dim-2)) #Base change formula
         self.base = base
         inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.int64).float().to(device) / self.dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)
+        
 
     @torch.no_grad()
     # Copied from transformers.models.llama.modeling_llama.LlamaRotaryEmbedding.forward
@@ -346,10 +349,13 @@ class Zamba2Attention(nn.Module):
 
         if config.use_mem_rope:
             self.rotary_emb = Zamba2RotaryEmbedding(
+                config,
                 self.head_dim,
                 max_position_embeddings=config.max_position_embeddings,
                 base=self.rope_theta,
             )
+
+
 
     def forward(
         self,
@@ -1131,6 +1137,11 @@ class Zamba2Model(Zamba2PreTrainedModel):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
+        
+        if config.use_long_context:
+            logger.warning_once(
+                    f"`use_long_context` has been set to True, therefore `max_position_embeddings` will be set to 16384."
+                )
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.blocks = torch.nn.ModuleList([Zamba2AttentionDecoderLayer(config) for _ in range(config.num_mem_blocks)])
