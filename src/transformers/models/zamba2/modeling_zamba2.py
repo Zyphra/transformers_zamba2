@@ -118,7 +118,7 @@ class Zamba2RotaryEmbedding(nn.Module):
         super().__init__()
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
-        if config.use_long_cdontext:
+        if config.use_long_context:
             a = 8 #Alpha value
             base = base * a ** (dim / (dim-2)) #Base change formula
         self.base = base
