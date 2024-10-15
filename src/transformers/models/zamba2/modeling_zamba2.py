@@ -119,7 +119,7 @@ class Zamba2RotaryEmbedding(nn.Module):
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
         if config.use_long_context:
-            a = 16 #Alpha value
+            a = 8 #Alpha value
             base = base * a ** (dim / (dim-2)) #Base change formula
         self.base = base
         inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.int64).float().to(device) / self.dim))
