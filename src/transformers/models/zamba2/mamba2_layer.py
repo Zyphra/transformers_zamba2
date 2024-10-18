@@ -84,7 +84,7 @@ class Mamba2Layer(nn.Module):
 
         # Order: [z, x, B, C, dt]
         d_in_proj = 2 * self.d_inner + 2 * self.ngroups * self.d_state + self.nheads
-        self.in_proj = nn.ModuleList([nn.Linear(self.d_model, d_in_proj, bias=self.config.add_bias_linear, **factory_kwargs)])
+        self.in_proj = nn.Linear(self.d_model, d_in_proj, bias=self.config.add_bias_linear, **factory_kwargs)
 
         conv_dim = self.d_ssm + 2 * self.ngroups * self.d_state
         self.conv1d = nn.Conv1d(
@@ -175,7 +175,7 @@ class Mamba2Layer(nn.Module):
                 out, _, _ = self.step(u, conv_state, ssm_state)
                 return out
 
-        zxbcdt = self.in_proj[0](u)  # (B, L, d_in_proj) or (B * L, d_in_proj)
+        zxbcdt = self.in_proj(u)  # (B, L, d_in_proj) or (B * L, d_in_proj)
         if seqlen_og is not None:
             zxbcdt = rearrange(zxbcdt, "(b l) d -> b l d", l=seqlen)        
         A = -torch.exp(self.A_log)  # (nheads) or (d_inner, d_state)
@@ -277,7 +277,7 @@ class Mamba2Layer(nn.Module):
     def step(self, hidden_states, conv_state, ssm_state):
         dtype = hidden_states.dtype
         assert hidden_states.shape[1] == 1, "Only support decoding with 1 token at a time for now"
-        zxbcdt = self.in_proj[0](hidden_states.squeeze(1))  # (B 2D)
+        zxbcdt = self.in_proj(hidden_states.squeeze(1))  # (B 2D)
         d_mlp = (zxbcdt.shape[-1] - 2 * self.d_ssm - 2 * self.ngroups * self.d_state - self.nheads) // 2
         z0, x0, z, xBC, dt = torch.split(
             zxbcdt,
@@ -359,7 +359,7 @@ class Mamba2Layer(nn.Module):
         conv_state = torch.zeros(
             batch_size, self.conv1d.weight.shape[0], self.d_conv, device=device, dtype=conv_dtype
         )
-        ssm_dtype = self.in_proj[0].weight.dtype if dtype is None else dtype
+        ssm_dtype = self.in_proj.weight.dtype if dtype is None else dtype
         ssm_state = torch.zeros(
             batch_size, self.nheads, self.headdim, self.d_state, device=device, dtype=ssm_dtype
         )
@@ -381,7 +381,7 @@ class Mamba2Layer(nn.Module):
                 self.nheads,
                 self.headdim,
                 self.d_state,
-                device=self.in_proj[0].weight.device,
+                device=self.in_proj.weight.device,
                 dtype=torch.bfloat16
             )
             inference_params.key_value_memory_dict_mamba[self.layer_idx] = (conv_state, ssm_state)

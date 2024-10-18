@@ -1423,13 +1423,6 @@ class Zamba2ForCausalLM(Zamba2PreTrainedModel):
         >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
         ```"""
-        # from transformers import AutoTokenizer
-        # # tokenizer = AutoTokenizer.from_pretrained("/workspace/summarization-poc/checkpoints/dpo/ultrafeedback_openhermespref_orcadoppairs_1epoch_then_2epochs/checkpoint-7122")
-        # tokenizer = AutoTokenizer.from_pretrained("Zyphra/Zamba2-2.7B-instruct")
-        # torch.set_printoptions(threshold=torch.inf)
-        # print(input_ids)
-        # print(tokenizer.batch_decode(input_ids, skip_special_tokens=False)[0])
-        # input()
 
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
 
