@@ -145,6 +145,7 @@ class Zamba2Config(PretrainedConfig):
         eos_token_id=2,
 
         ft_lora = False,
+        use_long_context=False,
         **kwargs,
     ):
 
@@ -170,6 +171,9 @@ class Zamba2Config(PretrainedConfig):
         self.use_shared_block_lora = use_shared_block_lora
         self.use_shared_attention_lora = use_shared_attention_lora
         self.lora_rank = lora_rank
+        self.use_long_context=use_long_context
+        if use_long_context:
+            self.max_position_embeddings = 16384
         
         # for backward compatibility
         if num_key_value_heads is None:
