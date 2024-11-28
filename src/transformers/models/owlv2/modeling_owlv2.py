@@ -98,7 +98,7 @@ class Owlv2Output(ModelOutput):
         )
 
 
-# Copied from transformers.models.detr.modeling_detr._upcast
+# Copied from transformers.loss.loss_for_object_detection._upcast
 def _upcast(t: Tensor) -> Tensor:
     # Protects from numerical overflows in multiplications by upcasting to the equivalent higher type
     if t.is_floating_point():
@@ -107,7 +107,7 @@ def _upcast(t: Tensor) -> Tensor:
         return t if t.dtype in (torch.int32, torch.int64) else t.int()
 
 
-# Copied from transformers.models.detr.modeling_detr.box_area
+# Copied from transformers.loss.loss_for_object_detection.box_area
 def box_area(boxes: Tensor) -> Tensor:
     """
     Computes the area of a set of bounding boxes, which are specified by its (x1, y1, x2, y2) coordinates.
@@ -124,7 +124,7 @@ def box_area(boxes: Tensor) -> Tensor:
     return (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
 
 
-# Copied from transformers.models.detr.modeling_detr.box_iou
+# Copied from transformers.loss.loss_for_object_detection.box_iou
 def box_iou(boxes1, boxes2):
     area1 = box_area(boxes1)
     area2 = box_area(boxes2)
@@ -141,7 +141,7 @@ def box_iou(boxes1, boxes2):
     return iou, union
 
 
-# Copied from transformers.models.detr.modeling_detr.generalized_box_iou
+# Copied from transformers.loss.loss_for_object_detection.generalized_box_iou
 def generalized_box_iou(boxes1, boxes2):
     """
     Generalized IoU from https://giou.stanford.edu/. The boxes should be in [x0, y0, x1, y1] (corner) format.
@@ -459,7 +459,7 @@ class Owlv2MLP(nn.Module):
         return hidden_states
 
 
-# Copied from transformers.models.clip.modeling_clip.CLIPEncoderLayer with CLIP->Owlv2
+# Copied from transformers.models.altclip.modeling_altclip.AltCLIPEncoderLayer with AltCLIP->Owlv2
 class Owlv2EncoderLayer(nn.Module):
     def __init__(self, config: Owlv2Config):
         super().__init__()
@@ -1015,13 +1015,13 @@ class Owlv2Model(Owlv2PreTrainedModel):
         super().__init__(config)
 
         if not isinstance(config.text_config, Owlv2TextConfig):
-            raise ValueError(
+            raise TypeError(
                 "config.text_config is expected to be of type Owlv2TextConfig but is of type"
                 f" {type(config.text_config)}."
             )
 
         if not isinstance(config.vision_config, Owlv2VisionConfig):
-            raise ValueError(
+            raise TypeError(
                 "config.vision_config is expected to be of type Owlv2VisionConfig but is of type"
                 f" {type(config.vision_config)}."
             )

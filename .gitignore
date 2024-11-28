@@ -4,10 +4,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
-src/transformers/models/zamba2/csrc/
-src/transformers/models/zamba2/state_dict.pkl
-src/transformers/models/zamba2/state_dict_hf.bin
-src/transformers/models/zamba2/transformers_zamba2_tests.ipynb
+
 # C extensions
 *.so
 
