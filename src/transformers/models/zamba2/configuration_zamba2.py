@@ -132,7 +132,7 @@ class Zamba2Config(PretrainedConfig):
         use_shared_block_lora=True,
         use_shared_attention_lora=False,
         lora_rank=128,
-        use_mem_eff_path=True,
+        use_mem_eff_path=False,
         use_mem_rope=False,
         rope_theta=10000,
         
