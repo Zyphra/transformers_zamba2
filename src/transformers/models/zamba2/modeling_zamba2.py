@@ -751,19 +751,26 @@ class Zamba2SdpaAttention(Zamba2Attention):
             q_lora_output = linear_q_lora_A(hidden_states)
             q_lora_output = linear_q_lora_B(q_lora_output)
             query_states = self.q_proj(hidden_states)
+            print(f"      query_states: {query_states.shape},\n      {query_states}")
             query_states = query_states + q_lora_output
             linear_k_lora_A = self.linear_k_lora_A_list[layer_idx]
             linear_k_lora_B = self.linear_k_lora_B_list[layer_idx]
             k_lora_output = linear_k_lora_A(hidden_states)
             k_lora_output = linear_k_lora_B(k_lora_output)
             key_states = self.k_proj(hidden_states)
+            print(f"      key_states: {key_states.shape},\n      {key_states}")
             key_states = key_states + k_lora_output
             linear_v_lora_A = self.linear_v_lora_A_list[layer_idx]
             linear_v_lora_B = self.linear_v_lora_B_list[layer_idx]
             v_lora_output = linear_v_lora_A(hidden_states)
             v_lora_output = linear_v_lora_B(v_lora_output)
             value_states = self.v_proj(hidden_states)
+            print(f"      value_states: {value_states.shape},\n         {value_states}")
             value_states = value_states + v_lora_output
+            print(f"      After LoRA:")
+            print(f"      query_states: {query_states.shape},\n         {query_states}")
+            print(f"      key_states: {key_states.shape},\n         {key_states}")
+            print(f"      value_states: {value_states.shape},\n         {value_states}")            
         else:
             query_states = self.q_proj(hidden_states)
             key_states = self.k_proj(hidden_states)
@@ -776,6 +783,9 @@ class Zamba2SdpaAttention(Zamba2Attention):
         if self.config.use_mem_rope:
             cos, sin = self.rotary_emb(value_states, position_ids)
             query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+            print(f"      After RoPE:")
+            print(f"      query_states: {query_states.shape},\n         {query_states.transpose(1, 2).reshape(bsz, q_len, -1)}")
+            print(f"      key_states: {key_states.shape},\n         {key_states.transpose(1, 2).reshape(bsz, q_len, -1)}")            
 
         if past_key_value is not None:
             layer_idx = self.layer_block_map[layer_idx]
@@ -810,6 +820,7 @@ class Zamba2SdpaAttention(Zamba2Attention):
 
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.view(bsz, q_len, 2 * self.hidden_size)
+        print(f"      attention: {attn_output.shape},\n         {attn_output}")
 
         attn_output = self.o_proj(attn_output)
 
@@ -986,12 +997,15 @@ class Zamba2MambaDecoderLayer(nn.Module):
         hidden_states = (
             hidden_states + transformer_hidden_states if transformer_hidden_states is not None else hidden_states
         )
+        print(f"      mamba input: {hidden_states.shape},\n         {hidden_states}")
         hidden_states = self.input_layernorm(hidden_states)
+        print(f"      mamba input layernorm: {hidden_states.shape},\n         {hidden_states}")
         hidden_states = self.mamba(
             u=hidden_states,
             inference_params=past_key_value,
             attention_mask=attention_mask,
         )
+        print(f"      mamba output: {hidden_states.shape},\n         {hidden_states}")
 
         self_attn_weights = None
 
@@ -1203,8 +1217,12 @@ class Zamba2Model(Zamba2PreTrainedModel):
             )
             use_cache = False
 
+        print(f"\nForward pass:")
         if inputs_embeds is None:
+            print(f"input_ids: shape={input_ids.shape},\n   {input_ids}")
             inputs_embeds = self.embed_tokens(input_ids)
+        print(f"inputs_embeds: shape={inputs_embeds.shape},\n   {inputs_embeds}")
+        print(f"position_ids: shape={position_ids.shape},\n   {position_ids}")
 
         hidden_states = inputs_embeds
         
@@ -1228,13 +1246,16 @@ class Zamba2Model(Zamba2PreTrainedModel):
         linear_layers = iter(self.linear_layers)
         block_count = 0
         for layer_idx, layer_type in enumerate(self.layers_block_type):
+            print(f"layer {layer_idx}, layer type {layer_type}")
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
             if layer_type == "g":
+                j = block_count % self.config.num_mem_blocks
+                print(f"  block {block_count}, {j}")
                 if self.gradient_checkpointing and self.training:
                     layer_outputs = self._gradient_checkpointing_func(
-                        self.blocks[block_count % self.config.num_mem_blocks].__call__,
+                        self.blocks[j].__call__,
                         hidden_states,
                         original_hidden_states,
                         block_count,
@@ -1247,7 +1268,7 @@ class Zamba2Model(Zamba2PreTrainedModel):
                         block_count,
                     )
                 else:
-                    layer_outputs = self.blocks[block_count % self.config.num_mem_blocks](
+                    layer_outputs = self.blocks[j](
                         hidden_states,
                         original_hidden_states=original_hidden_states,
                         layer_idx=block_count,
@@ -1260,6 +1281,7 @@ class Zamba2Model(Zamba2PreTrainedModel):
                     )
                 block_count += 1
                 transformer_hidden_states = layer_outputs[0]
+                print(f"   transformer_hidden_states: {transformer_hidden_states.shape},\n      {transformer_hidden_states}")
                 if output_attentions:
                     if layer_outputs[1] is not None:
                         all_self_attns += (layer_outputs[1],)
@@ -1272,6 +1294,7 @@ class Zamba2Model(Zamba2PreTrainedModel):
                     transformer_hidden_states = next(linear_layers)(
                         transformer_hidden_states,
                     )
+                    print(f"   transformer_hidden_states: {transformer_hidden_states.shape},\n      {transformer_hidden_states}")
             else:
                 transformer_hidden_states = None
             if self.gradient_checkpointing and self.training:
@@ -1297,9 +1320,11 @@ class Zamba2Model(Zamba2PreTrainedModel):
                     use_cache=use_cache,
                     cache_position=cache_position,
                 )
+                print(f"   layer_outputs: {layer_outputs[0].shape},\n      {layer_outputs[0]}")
             hidden_states = layer_outputs[0]
             
         hidden_states = self.final_layernorm(hidden_states)
+        print(f"hidden_states: shape={hidden_states.shape},\n   {hidden_states}")
 
         # add hidden states from the last decoder layer
         if output_hidden_states:
@@ -1462,6 +1487,7 @@ class Zamba2ForCausalLM(Zamba2PreTrainedModel):
         else:
             logits = self.lm_head(hidden_states[..., -num_logits_to_keep:, :])
         logits = logits.float()
+        print(f"logits: {logits.shape},\n   {logits}")
         loss = None
         if labels is not None:
             # Shift so that tokens < n predict n

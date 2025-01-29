@@ -192,8 +192,8 @@ _deps = [
     "ninja",
     "einops",
     "triton",
-    "causal-conv1d==1.3.0.post1",
-    "mamba-ssm==2.1.0",
+    "causal-conv1d",
+    "mamba-ssm",
 ]
 
 
