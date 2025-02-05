@@ -1,3 +1,11 @@
+import os
+DEBUG = int(os.getenv('DEBUG', 0))
+
+def debug_print(str):
+    if DEBUG:
+        print(str)
+
+
 import math
 from typing import Optional, Union
 from abc import ABC, abstractmethod
@@ -159,7 +167,8 @@ class Mamba2Layer(nn.Module):
             (in case batch is small).
         Returns: same shape as u
         """
-        
+        debug_print(f"      mamba2_layer forward")
+
         seqlen_og = seqlen
         if seqlen is None:
             batch, seqlen, dim = u.shape
@@ -176,6 +185,7 @@ class Mamba2Layer(nn.Module):
                 return out
 
         zxbcdt = self.in_proj(u)  # (B, L, d_in_proj) or (B * L, d_in_proj)
+        debug_print(f"      mamba2_layer zxbcdt: {zxbcdt.shape},\n         {zxbcdt}")
         if seqlen_og is not None:
             zxbcdt = rearrange(zxbcdt, "(b l) d -> b l d", l=seqlen)        
         A = -torch.exp(self.A_log)  # (nheads) or (d_inner, d_state)
@@ -212,6 +222,11 @@ class Mamba2Layer(nn.Module):
                 [d_mlp, d_mlp, self.d_ssm, self.d_ssm + 2 * self.ngroups * self.d_state, self.nheads],
                 dim=-1
             )
+            debug_print(f"      mamba2_layer z0: {z0.shape},\n         {z0}")
+            debug_print(f"      mamba2_layer x0: {x0.shape},\n         {x0}")
+            debug_print(f"      mamba2_layer z: {z.shape},\n         {z}")
+            debug_print(f"      mamba2_layer xBC: {xBC.shape},\n         {xBC}")
+            debug_print(f"      mamba2_layer dt: {dt.shape},\n         {dt}")
             if attention_mask is not None and not torch.all(attention_mask==1):
                 xBC = xBC * attention_mask.unsqueeze(-1)
             if conv_state is not None:
@@ -231,9 +246,13 @@ class Mamba2Layer(nn.Module):
                     bias=self.conv1d.bias,
                     activation=self.activation,
                 ).transpose(1, 2)
+            debug_print(f"      mamba2_layer causal_conv1d xBC: {xBC.shape},\n         {xBC}")
             if attention_mask is not None and not torch.all(attention_mask==1):
                 xBC = xBC * attention_mask.unsqueeze(-1)
             x, B, C = torch.split(xBC, [self.d_ssm, self.ngroups * self.d_state, self.ngroups * self.d_state], dim=-1)
+            debug_print(f"      mamba2_layer x: {x.shape},\n         {x}")
+            debug_print(f"      mamba2_layer B: {B.shape},\n         {B}")
+            debug_print(f"      mamba2_layer C: {C.shape},\n         {C}")
             if self.config.ft_lora:
                 lora_output_x = self.x_lora_A(x)
                 lora_output_x = self.x_lora_B(lora_output_x)
@@ -241,6 +260,7 @@ class Mamba2Layer(nn.Module):
                 lora_output_z = self.z_lora_B(lora_output_z)
                 x = x + lora_output_x
                 z = z + lora_output_z
+            debug_print("      mamba2_layer mamba_chunk_scan_combined")
             y = mamba_chunk_scan_combined(
                 rearrange(x, "b l (h p) -> b l h p", p=self.headdim),
                 dt,
@@ -259,9 +279,13 @@ class Mamba2Layer(nn.Module):
             if ssm_state is not None:
                 y, last_state = y
                 ssm_state.copy_(last_state)
+                debug_print(f"      mamba2_layer ssm_state: {ssm_state.shape},\n         {ssm_state}")
+            debug_print(f"      mamba2_layer y: {y.shape},\n         {y}")
             y = rearrange(y, "b l h p -> b l (h p)")
+            debug_print(f"      mamba2_layer y: {y.shape},\n         {y}")
             if self.rmsnorm:
                 y = self.norm(y, z)
+                debug_print(f"      mamba2_layer y after gated rmsnorm: {y.shape},\n         {y}")
             if d_mlp > 0:
                 y = torch.cat([F.silu(z0) * x0, y], dim=-1)
             if seqlen_og is not None:
@@ -275,18 +299,26 @@ class Mamba2Layer(nn.Module):
         return out
 
     def step(self, hidden_states, conv_state, ssm_state):
+        debug_print(f"      mamba2_layer step")        
         dtype = hidden_states.dtype
         assert hidden_states.shape[1] == 1, "Only support decoding with 1 token at a time for now"
         zxbcdt = self.in_proj(hidden_states.squeeze(1))  # (B 2D)
+        debug_print(f"      mamba2_layer zxbcdt: {zxbcdt.shape},\n         {zxbcdt}")
         d_mlp = (zxbcdt.shape[-1] - 2 * self.d_ssm - 2 * self.ngroups * self.d_state - self.nheads) // 2
         z0, x0, z, xBC, dt = torch.split(
             zxbcdt,
             [d_mlp, d_mlp, self.d_ssm, self.d_ssm + 2 * self.ngroups * self.d_state, self.nheads],
             dim=-1
         )
-        
+        debug_print(f"      mamba2_layer z0: {z0.shape},\n         {z0}")
+        debug_print(f"      mamba2_layer x0: {x0.shape},\n         {x0}")
+        debug_print(f"      mamba2_layer z: {z.shape},\n         {z}")
+        debug_print(f"      mamba2_layer xBC: {xBC.shape},\n         {xBC}")
+        debug_print(f"      mamba2_layer dt: {dt.shape},\n         {dt}")
+
         # Conv step
         if causal_conv1d_update is None:
+            debug_print("      mamba2_layer using native torch implementation")
             conv_state.copy_(torch.roll(conv_state, shifts=-1, dims=-1))  # Update state (B D W)
             conv_state[:, :, -1] = xBC
             xBC = torch.sum(conv_state * rearrange(self.conv1d.weight, "d 1 w -> d w"), dim=-1)  # (B D)
@@ -301,8 +333,12 @@ class Mamba2Layer(nn.Module):
                 self.conv1d.bias,
                 self.activation,
             )
+        debug_print(f"      mamba2_layer causal_conv1d xBC: {xBC.shape},\n         {xBC}")
 
         x, B, C = torch.split(xBC, [self.d_ssm, self.ngroups * self.d_state, self.ngroups * self.d_state], dim=-1)
+        debug_print(f"      mamba2_layer x: {x.shape},\n         {x}")
+        debug_print(f"      mamba2_layer B: {B.shape},\n         {B}")
+        debug_print(f"      mamba2_layer C: {C.shape},\n         {C}")
 
         if self.config.ft_lora:
             lora_output_x = self.x_lora_A(x)
@@ -314,7 +350,9 @@ class Mamba2Layer(nn.Module):
         A = -torch.exp(self.A_log.float())  # (nheads,)
 
         # SSM step
+        debug_print("      mamba2_layer selective_state_update")
         if selective_state_update is None:
+            debug_print("      mamba2_layer using native torch implementation")
             assert self.ngroups == 1, "Only support ngroups=1 for this inference code path"
             # Discretize A and B
             dt = F.softplus(dt + self.dt_bias.to(dtype=dt.dtype))  # (batch, nheads)
@@ -342,8 +380,10 @@ class Mamba2Layer(nn.Module):
                 dt_bias=dt_bias, dt_softplus=True
             )
             y = rearrange(y, "b h p -> b (h p)")
+        debug_print(f"      mamba2_layer y: {y.shape},\n         {y}")            
         if self.rmsnorm:
             y = self.norm(y, z)
+            debug_print(f"      mamba2_layer y after gated rmsnorm: {y.shape},\n         {y}")
         if d_mlp > 0:
             y = torch.cat([F.silu(z0) * x0, y], dim=-1)
         out = self.out_proj(y)
